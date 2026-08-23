@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   FileText, Download, Check, AlertTriangle, Search, ArrowRight, Layers, Ship, Truck,
-  ClipboardList, FileSpreadsheet, FileDown,
+  ClipboardList, FileSpreadsheet, FileDown, FileType,
 } from "lucide-react";
 import {
   Card, CardHead, Btn, Field, Input, Select, Pill, Mono, Empty, Note, SearchInput, Info,
@@ -17,7 +17,7 @@ import { useIsMobile } from "../../lib/useIsMobile.js";
 import { docCtx, poCtx } from "../../lib/docCtx.js";
 import {
   renderDocument, DOC_META, DOC_GROUPS, PREVIEW_CSS, isPoDoc, PO_DOCS,
-  supplierSplitDocs, downloadSupplierDoc, downloadDocumentExcel, downloadDocumentPDF,
+  supplierSplitDocs, downloadSupplierDoc, downloadDocumentExcel, downloadDocumentPDF, isWordDoc,
   downloadStageExcel, downloadStagePDF,
 } from "../../lib/docs.js";
 import { safeHtml } from "../../lib/safeHtml.js";
@@ -181,8 +181,11 @@ export default function DocumentsPage({ group }) {
   const previewHtml = renderDocument(open, ctx);
   const stamp = poMode ? `PO_${po.po}` : (inv?.invoice_no || "").replace(/\//g, "-");
 
+  /* The same button on every document: a workbook for the papers that are
+     worksheets, and the Word document itself for the ones that are typed. */
   const grabExcel = (no) => {
-    if (downloadDocumentExcel(no, isPoDoc(no) ? orderCtx : invCtx)) toast(`Document ${no} · ${DOC_META[no]} — Excel`);
+    const fmt = isWordDoc(no) ? "Word" : "Excel";
+    if (downloadDocumentExcel(no, isPoDoc(no) ? orderCtx : invCtx)) toast(`Document ${no} · ${DOC_META[no]} — ${fmt}`);
   };
   const grabPDF = (no) => {
     if (downloadDocumentPDF(no, isPoDoc(no) ? orderCtx : invCtx)) toast(`Document ${no} · ${DOC_META[no]} — opening print dialog`);
@@ -273,8 +276,9 @@ export default function DocumentsPage({ group }) {
                   <button key={no} className={`doc-item${!mobile && open === no ? " on" : ""}`} onClick={() => setOpen(no)}>
                     <span className="doc-no">{no}</span>
                     <span className="doc-name">{DOC_META[no]}</span>
-                    <span className="icon-btn bare" onClick={(e) => { e.stopPropagation(); grabExcel(no); }} title="Download Excel" style={{ width: 24, height: 24 }}>
-                      <FileSpreadsheet size={14} />
+                    <span className="icon-btn bare" onClick={(e) => { e.stopPropagation(); grabExcel(no); }}
+                      title={isWordDoc(no) ? "Download Word" : "Download Excel"} style={{ width: 24, height: 24 }}>
+                      {isWordDoc(no) ? <FileType size={14} /> : <FileSpreadsheet size={14} />}
                     </span>
                     <span className="icon-btn bare" onClick={(e) => { e.stopPropagation(); grabPDF(no); }} title="Download PDF" style={{ width: 24, height: 24 }}>
                       <FileDown size={14} />
@@ -318,7 +322,7 @@ export default function DocumentsPage({ group }) {
             <span style={{ fontSize: 11.5, color: "var(--faint)" }}>
               {poMode ? <>PO {po.po} · {dmyNum(po.date)}</> : <>{inv.invoice_no} · {dmy(inv.date)}</>}
             </span>
-            <DownloadPair onExcel={() => grabExcel(open)} onPDF={() => grabPDF(open)} />
+            <DownloadPair word={isWordDoc(open)} onExcel={() => grabExcel(open)} onPDF={() => grabPDF(open)} />
           </CardHead>
           <div className="docprev-shell">
             {split.length > 0 && (

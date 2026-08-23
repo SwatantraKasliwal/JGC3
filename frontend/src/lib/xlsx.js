@@ -24,94 +24,9 @@
    number baked in at download time.
    ============================================================================ */
 
-/* ---- CRC-32, for the zip entries ---- */
-const CRC = (() => {
-  const t = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-    t[n] = c >>> 0;
-  }
-  return t;
-})();
+import { X, utf8, zipBlob } from "./zip.js";
 
-function crc32(buf) {
-  let c = 0xFFFFFFFF;
-  for (let i = 0; i < buf.length; i++) c = CRC[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
-  return (c ^ 0xFFFFFFFF) >>> 0;
-}
-
-/* ---- ZIP (stored, no compression — valid, and keeps this dependency-free) ---- */
-function zipBlob(files) {
-  const enc = new TextEncoder();
-  const parts = [];
-  const central = [];
-  let offset = 0;
-
-  files.forEach((f) => {
-    const name = enc.encode(f.name);
-    const data = f.data;
-    const crc = crc32(data);
-
-    const local = new Uint8Array(30 + name.length);
-    const lv = new DataView(local.buffer);
-    lv.setUint32(0, 0x04034b50, true);
-    lv.setUint16(4, 20, true);       // version needed to extract
-    lv.setUint16(6, 0x0800, true);   // UTF-8 file names
-    lv.setUint16(8, 0, true);        // method 0 — stored
-    lv.setUint16(10, 0, true);       // mod time
-    lv.setUint16(12, 0x21, true);    // mod date (1980-01-01)
-    lv.setUint32(14, crc, true);
-    lv.setUint32(18, data.length, true);
-    lv.setUint32(22, data.length, true);
-    lv.setUint16(26, name.length, true);
-    lv.setUint16(28, 0, true);
-    local.set(name, 30);
-    parts.push(local, data);
-
-    const cd = new Uint8Array(46 + name.length);
-    const cv = new DataView(cd.buffer);
-    cv.setUint32(0, 0x02014b50, true);
-    cv.setUint16(4, 20, true);
-    cv.setUint16(6, 20, true);
-    cv.setUint16(8, 0x0800, true);
-    cv.setUint16(10, 0, true);
-    cv.setUint16(12, 0, true);
-    cv.setUint16(14, 0x21, true);
-    cv.setUint32(16, crc, true);
-    cv.setUint32(20, data.length, true);
-    cv.setUint32(24, data.length, true);
-    cv.setUint16(28, name.length, true);
-    cv.setUint32(42, offset, true);
-    cd.set(name, 46);
-    central.push(cd);
-
-    offset += local.length + data.length;
-  });
-
-  const cdSize = central.reduce((s, c) => s + c.length, 0);
-  const end = new Uint8Array(22);
-  const ev = new DataView(end.buffer);
-  ev.setUint32(0, 0x06054b50, true);
-  ev.setUint16(8, files.length, true);
-  ev.setUint16(10, files.length, true);
-  ev.setUint32(12, cdSize, true);
-  ev.setUint32(16, offset, true);
-
-  return new Blob([...parts, ...central, end], {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
-}
-
-/* ---- XML helpers ---- */
-const X = (s) => String(s == null ? "" : s)
-  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-  .replace(/"/g, "&quot;")
-  // Control characters are illegal in XML 1.0 and would make Excel refuse
-  // the whole file, so they are dropped rather than escaped.
-  .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
-
-const utf8 = (s) => new TextEncoder().encode(s);
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 export function colLetter(n) {
   let s = "";
@@ -169,6 +84,9 @@ const FONTS = [
   { key: "ref9", xml: '<font><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
   { key: "ref9b", xml: '<font><b/><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
   { key: "ref9bu", xml: '<font><b/><u/><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
+  /* The shipper's own name across the head of the letter to the CHA (22),
+     set large over the two rows their form gives it. */
+  { key: "ref18b", xml: '<font><b/><sz val="18"/><name val="Arial"/><family val="2"/></font>' },
   { key: "brandk", xml: '<font><b/><sz val="18"/><name val="Centaur"/><family val="1"/></font>' },
   /* The annexure to that invoice (18 · Annx) is not typed on the form at all —
      it is a plain Calibri sheet with the printed letterhead pasted over the top
@@ -199,11 +117,25 @@ const FONTS = [
   /* The despatch instruction is a letter on the printed letterhead — Calibri
      body, Centaur maroon masthead, and the contact strip along the foot. */
   { key: "letb", xml: '<font><b/><sz val="10.5"/><color theme="1"/><name val="Calibri"/></font>' },
+  // The heading of the gross-mass declaration (27) is underlined as well, and
+  // so is the word its notes are gathered under.
+  { key: "letbu", xml: '<font><b/><u/><sz val="10.5"/><color theme="1"/><name val="Calibri"/></font>' },
+  { key: "letu", xml: '<font><u/><sz val="10.5"/><color theme="1"/><name val="Calibri"/></font>' },
   /* Calibri 11 — the workbooks the client built in Excel's own default face
      rather than in the older Arial books (12 · Shipment boxes & volume). */
   { key: "cal", xml: '<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
   { key: "calb", xml: '<font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
   // The letterhead's own two inks, in that same Calibri.
+  /* Calibri 10 — the shipping instructions (26) state their column widths in
+     the Arial their workbook's normal style is set in, but the form itself is
+     typed a size down in Calibri, which is what it has to be measured in. */
+  { key: "cal10", xml: '<font><sz val="10"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
+  { key: "cal10b", xml: '<font><b/><sz val="10"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
+  /* Calibri 12 — the annexure to the bill of lading (24) is a typed sheet, not
+     a worksheet, and that is the face and size it is typed at. */
+  { key: "cal12", xml: '<font><sz val="12"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
+  { key: "cal12b", xml: '<font><b/><sz val="12"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
+  { key: "cal12bu", xml: '<font><b/><u/><sz val="12"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
   { key: "calbl", xml: '<font><sz val="11"/><color rgb="FF0000FF"/><name val="Calibri"/><family val="2"/></font>' },
   { key: "calr", xml: '<font><sz val="11"/><color rgb="FFFF0000"/><name val="Calibri"/><family val="2"/></font>' },
   /* Times New Roman — the customs declarations are typed forms, and that is
@@ -420,31 +352,73 @@ function sheetXml(sheet, styleOf) {
   const fmtPr = `<sheetFormatPr${sheet.defaultColWidth ? ` defaultColWidth="${sheet.defaultColWidth}"` : ""} defaultRowHeight="${sheet.defaultRowHeight || 15}"/>`;
   const m = (page && page.margins) || { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 };
   const margins = `<pageMargins left="${m.left}" right="${m.right}" top="${m.top}" bottom="${m.bottom}" header="${m.header ?? 0.3}" footer="${m.footer ?? 0.3}"/>`;
-  // fitH: 0 fits the sheet to one page across and lets it run on downwards —
-  // what a list of unknown length wants.
+  /* fitH: 0 fits the sheet to one page across and lets it run on downwards —
+     what a list of unknown length wants. fitW says the same for the width: the
+     attribute defaults to one page in the format, but a reader that takes a
+     missing one as "no limit" fits the sheet to the height alone and prints it
+     a size the sheet never asked for, so a form that must come off one page
+     across says so. */
   const fitH = page && page.fitH != null ? ` fitToHeight="${page.fitH}"` : "";
+  const fitW = page && page.fitW != null ? ` fitToWidth="${page.fitW}"` : "";
   const setup = page
-    ? `<pageSetup paperSize="${page.paper || 9}" scale="${page.scale || 100}"${fitH} orientation="${page.orientation || "portrait"}"/>`
+    ? `<pageSetup paperSize="${page.paper || 9}" scale="${page.scale || 100}"${fitW}${fitH} orientation="${page.orientation || "portrait"}"/>`
     : "";
   // A form narrower than the paper is centred across it rather than left to
   // sit against the left margin — what the client's invoice books do.
   const opts = page && page.centered ? '<printOptions horizontalCentered="1"/>' : "";
 
-  // A sheet with a picture on it points at its own drawing part.
-  const drawing = sheet.image ? '<drawing r:id="rIdDr"/>' : "";
-  const rNs = sheet.image ? ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"' : "";
+  /* A form that says where its pages end says so here, as their own files do:
+     a letter with standing declarations under it breaks before the first of
+     them rather than wherever the paper happens to run out. */
+  const brks = (sheet.rowBreaks || []).filter((r) => r > 0);
+  const breaks = brks.length
+    ? `<rowBreaks count="${brks.length}" manualBreakCount="${brks.length}">${brks.map((r) => `<brk id="${r}" max="16383" man="1"/>`).join("")}</rowBreaks>`
+    : "";
+
+  // A sheet with anything drawn on it — pictures, ruled frames — points at its
+  // own drawing part. The letterhead images are fetched and may not arrive, so
+  // the frame beside them has to be able to stand on its own.
+  const drawn = sheetImages(sheet).length > 0 || sheetFrames(sheet).length > 0;
+  const drawing = drawn ? '<drawing r:id="rIdDr"/>' : "";
+  const rNs = drawn ? ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"' : "";
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"${rNs}>${pr}<sheetViews>${pane}</sheetViews>${fmtPr}${cols}<sheetData>${body}</sheetData>${mergeXml}${opts}${margins}${setup}${drawing}</worksheet>`;
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"${rNs}>${pr}<sheetViews>${pane}</sheetViews>${fmtPr}${cols}<sheetData>${body}</sheetData>${mergeXml}${opts}${margins}${setup}${breaks}${drawing}</worksheet>`;
 }
 
-/* A picture anchored to a cell — the letterhead mark on the supplier order.
-   `image` is { data, ext, col, row, colOff, rowOff, cx, cy }, sizes in EMU
-   (914400 to the inch), anchored one-cell so it keeps its shape whatever the
-   client does to the column widths. */
-function drawingXml(img) {
+/* The pictures a sheet carries. `image` is one of them, `images` several — a
+   letterhead that is a printed block beside a mark needs both — and either is
+   read as the same list. */
+const sheetImages = (sheet) => [...(sheet.images || []), sheet.image]
+  .filter((i) => i && i.data);
+
+/* A sheet may also rule an empty frame — the box the packing declaration stands
+   its mark in, which is a shape on their file rather than a border on cells,
+   because it begins and ends part way into a column. Same shape as a picture,
+   { col, row, colOff, rowOff, cx, cy }, with no bytes behind it. */
+const sheetFrames = (sheet) => (sheet.frames || []).filter(Boolean);
+
+/* Pictures anchored to cells — the letterhead mark on the supplier order, the
+   printed address block on the packing declaration. Each is
+   { data, ext, col, row, colOff, rowOff, cx, cy }, sizes in EMU (914400 to the
+   inch), anchored one-cell so it keeps its shape whatever the client does to
+   the column widths. Empty frames are ruled the same way, after them. */
+const RULE = `<a:ln w="9525"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln>`;
+
+const at = (p) => `<xdr:col>${p.col || 0}</xdr:col><xdr:colOff>${p.colOff || 0}</xdr:colOff><xdr:row>${p.row || 0}</xdr:row><xdr:rowOff>${p.rowOff || 0}</xdr:rowOff>`;
+
+/* An object is pinned to one corner and given a size, unless it carries a `to`
+   corner as well — then it stretches between the two and follows the columns it
+   spans, which is how the letterheads in their own files are drawn. */
+const anchorTo = (o, body) => (o.to
+  ? `<xdr:twoCellAnchor editAs="oneCell"><xdr:from>${at(o)}</xdr:from><xdr:to>${at(o.to)}</xdr:to>${body}<xdr:clientData/></xdr:twoCellAnchor>`
+  : `<xdr:oneCellAnchor><xdr:from>${at(o)}</xdr:from><xdr:ext cx="${o.cx}" cy="${o.cy}"/>${body}<xdr:clientData/></xdr:oneCellAnchor>`);
+
+function drawingXml(imgs, frames = []) {
+  const pics = imgs.map((img, i) => anchorTo(img, `<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${i + 1}" name="${X(img.name || `Picture ${i + 1}`)}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rId${i + 1}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${img.cx}" cy="${img.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${img.line ? RULE : ""}</xdr:spPr></xdr:pic>`)).join("");
+  const boxes = frames.map((f, i) => anchorTo(f, `<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${imgs.length + i + 1}" name="${X(f.name || `Frame ${i + 1}`)}"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${f.cx}" cy="${f.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>${RULE}</xdr:spPr><xdr:txBody><a:bodyPr/><a:p><a:endParaRPr lang="en-US"/></a:p></xdr:txBody></xdr:sp>`)).join("");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><xdr:oneCellAnchor><xdr:from><xdr:col>${img.col || 0}</xdr:col><xdr:colOff>${img.colOff || 0}</xdr:colOff><xdr:row>${img.row || 0}</xdr:row><xdr:rowOff>${img.rowOff || 0}</xdr:rowOff></xdr:from><xdr:ext cx="${img.cx}" cy="${img.cy}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="1" name="Logo"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${img.cx}" cy="${img.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor></xdr:wsDr>`;
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">${pics}${boxes}</xdr:wsDr>`;
 }
 
 /* Excel forbids : \ / ? * [ ] in a sheet name, and caps it at 31 characters. */
@@ -495,17 +469,23 @@ export function buildXLSX(workbook) {
     if (!m) { m = { data: img.data, ext: img.ext || "png", n: media.length + 1 }; media.push(m); }
     return m;
   };
-  const pics = sheets.map((s, i) => (s.image?.data
-    ? { sheet: i, img: s.image, media: mediaFor(s.image) } : null)).filter(Boolean);
+  const pics = sheets.map((s, i) => {
+    const imgs = sheetImages(s);
+    const frames = sheetFrames(s);
+    return imgs.length || frames.length
+      ? { sheet: i, imgs, frames, media: imgs.map(mediaFor) } : null;
+  }).filter(Boolean);
   pics.forEach((p, k) => { p.n = k + 1; });
   const picFiles = [
     ...media.map((m) => ({ name: `xl/media/image${m.n}.${m.ext}`, data: m.data })),
     ...pics.flatMap((p) => [
-      { name: `xl/drawings/drawing${p.n}.xml`, data: utf8(drawingXml(p.img)) },
+      { name: `xl/drawings/drawing${p.n}.xml`, data: utf8(drawingXml(p.imgs, p.frames)) },
       {
         name: `xl/drawings/_rels/drawing${p.n}.xml.rels`,
         data: utf8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${p.media.n}.${p.media.ext}"/></Relationships>`),
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${p.media
+  .map((m, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${m.n}.${m.ext}"/>`)
+  .join("")}</Relationships>`),
       },
       {
         name: `xl/worksheets/_rels/sheet${p.sheet + 1}.xml.rels`,
@@ -545,5 +525,5 @@ export function buildXLSX(workbook) {
     ...picFiles,
   ];
 
-  return zipBlob(files);
+  return zipBlob(files, XLSX_MIME);
 }
