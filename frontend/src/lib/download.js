@@ -9,6 +9,7 @@
 
    `downloadCSV` stays for the plain machine-readable dump. */
 import { buildXLSX } from "./xlsx.js";
+import { buildDOCX } from "./docx.js";
 import { gridToSheet, gridToHtml, htmlToSheet } from "./sheet.js";
 
 function saveBlob(blob, filename) {
@@ -41,6 +42,16 @@ export function downloadWorkbook(filename, sheets) {
   const list = Array.isArray(sheets) ? sheets : [sheets];
   if (!list.length) return;
   saveBlob(buildXLSX({ sheets: list }), xlsxName(filename));
+}
+
+const docxName = (name) => (/\.docx$/i.test(name) ? name : `${name.replace(/\.(doc|docx)$/i, "")}.docx`);
+
+/** Save a document that is a Word document rather than a workbook — the
+ *  annexure to the bill of lading (24) is typed, not tabulated, and the client
+ *  sends it on as it stands. */
+export function downloadDocsWord(filename, docx) {
+  if (!docx) return false;
+  return saveBlob(buildDOCX(docx), docxName(filename));
 }
 
 /** Save one of the app's own tables as Excel, formulas included. */
@@ -269,6 +280,246 @@ const PRINT_CSS = `
     display: block; text-align: right; font-size: 7.5pt; line-height: 1.25; margin: 0; color: #000; }
   table.ci.annx .lb { color: #0000ff !important; }
   table.ci.annx .rd { color: #ff0000 !important; }
+
+  /* 21 and 33 · the packing declaration — the same typed form on paper: ruled
+     only where their sheet rules it, with the letterhead across the head, and
+     at their sheet's own size. Their ten columns come to 501.6pt of paper, the
+     rows are 12.75pt and the type is Arial 10, so the printed form is the
+     worksheet 1:1 rather than a copy stretched to the width of the page. */
+  .pkd { --pkdpt: 1pt; --pkdrow: calc(var(--pkdpt) * 12.75);
+    font-family: Arial, Helvetica, sans-serif; font-size: calc(var(--pkdpt) * 10);
+    color: #000; width: calc(var(--pkdpt) * 501.6); }
+  .pkd table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0; }
+  .pkd td { border: none !important; padding: 0 2px; height: var(--pkdrow); vertical-align: middle;
+    white-space: nowrap; }
+  .pkd .ttl { font-size: calc(var(--pkdpt) * 14); font-weight: 700; text-align: center; }
+  .pkd .b { font-weight: 700; }
+  .pkd .c { text-align: center; }
+  .pkd .bx { border: 1px solid #000 !important; text-align: center; font-weight: 700; }
+  .pkd .lead { border-right: 1px solid #000 !important; }
+  /* The letterhead floats over the eight rows their sheet floats it over, each
+     of its two blocks where that sheet's own anchor puts it. */
+  .pkd .lh { padding: 0; border: none !important; }
+  .pkd .lhbox { position: relative; height: calc(var(--pkdrow) * 8); }
+  .pkd .lhbox img, .pkd .lhbx { position: absolute; }
+  .pkd .lhaddr { height: auto; }
+  .pkd .lhbx { border: 1px solid #000 !important; box-sizing: border-box; }
+
+  /* 22 · Letter to the CHA — their ruled instruction form. Their sheet is 629pt
+     across and their file prints it to fit, stepping the whole form down — type
+     and all — to land on the paper; --chapt does the same stepping here, onto
+     the A4 this prints on. Nothing is re-cut to fit: the form is theirs, one
+     size smaller. */
+  .cha { --chapt: 0.856pt; --charow: calc(var(--chapt) * 12);
+    font-family: Arial, Helvetica, sans-serif; font-size: calc(var(--chapt) * 9);
+    color: #000; width: calc(var(--chapt) * 629); }
+  .cha table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0; }
+  .cha td { border: none !important; padding: 0 2px; height: var(--charow); line-height: 1.1;
+    vertical-align: bottom; white-space: pre; overflow: hidden; }
+  .cha .el { border-left: 1px solid #000 !important; }
+  .cha .er { border-right: 1px solid #000 !important; }
+  .cha .et { border-top: 1px solid #000 !important; }
+  .cha .eb { border-bottom: 1px solid #000 !important; }
+  .cha .fb { font-weight: 700; }
+  .cha .fx { font-size: calc(var(--chapt) * 18); font-weight: 700; }
+  .cha .fm { vertical-align: middle; }
+  .cha .fc { text-align: center; }
+  .cha .fr { text-align: right; }
+  .cha .fl { text-align: left; }
+
+  /* 23 · Suppliers' details — their banded list. Their sheet is 802pt across and
+     their file fits it to the width of the paper, stepping the whole list down;
+     --suppt does the same stepping onto the A4 this prints on. The face is set
+     a shade under the sheet's 11pt: the print engine measures Calibri a little
+     wider than the spreadsheet does, and the columns here are cut to what fits
+     in the spreadsheet — a GSTIN losing its last letter to that difference is
+     worth more than the third of a point. */
+  .sup { --suppt: 0.671pt; --suprow: calc(var(--suppt) * 15); --suplh: calc(var(--suppt) * 19.5);
+    font-family: Calibri, Carlito, Arial, sans-serif; font-size: calc(var(--suppt) * 10.4);
+    color: #000; width: calc(var(--suppt) * 802); }
+  .sup table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0; }
+  .sup td { border: none !important; padding: 0 calc(var(--suppt) * 2.5); height: var(--suprow); line-height: 1.15;
+    vertical-align: bottom; white-space: nowrap; overflow: hidden; }
+  .sup .el { border-left: 1px solid #000 !important; }
+  .sup .er { border-right: 1px solid #000 !important; }
+  .sup .et { border-top: 1px solid #000 !important; }
+  .sup .eb { border-bottom: 1px solid #000 !important; }
+  .sup .fb { font-weight: 700; }
+  .sup .fs { font-size: 80%; }
+  .sup .fv { overflow: visible; }
+  .sup .fc { text-align: center; }
+  .sup .fr { text-align: right; }
+  .sup .fl { text-align: left; }
+  .sup .lh { padding: 0; border: none !important; }
+  .sup .lhbox { position: relative; height: calc(var(--suplh) * 7); }
+  .sup .lhbox img, .sup .lhbx { position: absolute; }
+  .sup .lhaddr { height: auto; }
+  .sup .lhbx { border: 1px solid #000 !important; box-sizing: border-box; }
+
+  /* 24 · Annexure to the bill of lading — a typed sheet at its own size: their
+     Calibri 12 over the three columns their tables are typed across, ruled the
+     way Word rules them. */
+  .bla { --blapt: 1pt; font-family: Calibri, Carlito, Arial, sans-serif;
+    font-size: calc(var(--blapt) * 12); line-height: 1.32; color: #000;
+    width: calc(var(--blapt) * 401.4); }
+  .bla table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0; }
+  .bla td { border: none !important; padding: 0 calc(var(--blapt) * 3); vertical-align: bottom;
+    text-align: left; }
+  .bla td.p { white-space: pre; padding-left: 0; }
+  .bla .ttl { font-weight: 700; text-align: center; }
+  .bla .mid { text-align: center; }
+  .bla .hd { font-weight: 700; text-decoration: underline; }
+  .bla td.c { border-bottom: 1px dotted #000 !important; border-right: 1px solid #000 !important; }
+  .bla td.c:last-child { border-right: none !important; }
+  .bla td.last { border-bottom: 1px solid #000 !important; }
+
+  /* 26 · Shipping instructions — the line's booking form. Their four columns
+     come to 574pt and their file prints them at 85%, type and all; --sipt does
+     the same stepping here, so the printed form is theirs at their size. */
+  .si { --sipt: 0.85pt; --sirow: calc(var(--sipt) * 12.75);
+    font-family: Calibri, Carlito, Arial, sans-serif; font-size: calc(var(--sipt) * 10);
+    line-height: 1.2; color: #000; width: calc(var(--sipt) * 574); }
+  .si table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0; }
+  .si td { border: none !important; padding: 0 calc(var(--sipt) * 2); height: var(--sirow);
+    vertical-align: bottom; white-space: nowrap; overflow: hidden; }
+  .si .el { border-left: 1px solid #000 !important; }
+  .si .er { border-right: 1px solid #000 !important; }
+  .si .et { border-top: 1px solid #000 !important; }
+  .si .eb { border-bottom: 1px solid #000 !important; }
+  .si .fb { font-weight: 700; }
+  .si .fc { text-align: center; }
+  .si .fg { background: #c0c0c0 !important; }
+  .si .fw { white-space: pre-wrap; vertical-align: top; }
+
+  /* 27 · Declaration of verified gross mass, on the letter paper. */
+  .vgm .vgmt { margin: 8px 0 12px; }
+  .vgm .vgmt td { border: 1px solid #000 !important; padding: 1.5px 4px; white-space: normal;
+    vertical-align: middle; }
+  .vgm .vgmt .sr { width: 6%; }
+  .vgm .vgmt .ask { width: 50%; }
+  .vgm .vgmt .ans { width: 44%; white-space: pre-line; }
+  .vgm .u { text-decoration: underline; }
+  .vgm .nb { margin: 0; }
+  .vgm .sg { width: 100%; margin: 0 0 8px; }
+  .vgm .sg>tbody>tr>td:first-child { width: 52%; }
+  .vgm .sg .k { min-width: 88px; }
+  .vgm .sgr { text-align: right; vertical-align: top; }
+  /* The whole declaration is a one-page paper, so it is set close enough to
+     come off one — fifteen ruled particulars, the signature block and the notes
+     under them do not fit at the size the letters are set at. */
+  .dl.vgm { font-size: 9.5pt; line-height: 1.25; }
+  .dl.vgm p { margin: 0 0 5px; }
+  .dl.vgm .vgmt { margin: 6px 0 8px; }
+  .dl.vgm .vgmt td { padding: 1px 4px; }
+  .dl.vgm .rule { margin: 5px 0 8px; }
+
+  /* 29 · E-way bill, export leg — the portal's printed bill. */
+  .ewx { --ewpt: 1pt; font-family: Arial, Helvetica, sans-serif;
+    font-size: calc(var(--ewpt) * 9); line-height: 1.25; color: #000;
+    width: calc(var(--ewpt) * 520); }
+  .ewx table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0; }
+  .ewx td { border: none !important; padding: 2px 4px; vertical-align: middle;
+    white-space: nowrap; overflow: hidden; }
+  .ewx .el { border-left: 1px solid #999 !important; }
+  .ewx .er { border-right: 1px solid #999 !important; }
+  .ewx .et { border-top: 1px solid #999 !important; }
+  .ewx .eb { border-bottom: 1px solid #999 !important; }
+  .ewx .fb { font-weight: 700; }
+  .ewx .ft { font-size: calc(var(--ewpt) * 15); font-weight: 700; padding: 5px 0; }
+  .ewx .fc { text-align: center; }
+  .ewx .fr { text-align: right; }
+  .ewx .fw { white-space: normal; vertical-align: top; }
+
+  /* 28 · Cost sheets — their grey form, one per factory, on the letterhead. */
+  .cs { --cspt: 0.85pt; --csrow: calc(var(--cspt) * 15);
+    font-family: Calibri, Carlito, Arial, sans-serif; font-size: calc(var(--cspt) * 10.6);
+    line-height: 1.2; color: #000; width: calc(var(--cspt) * 613); }
+  .cs table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0; }
+  .cs td { border: none !important; padding: 0 calc(var(--cspt) * 2); height: var(--csrow);
+    vertical-align: middle; white-space: nowrap; overflow: hidden; }
+  .cs .el { border-left: 1px solid #000 !important; }
+  .cs .er { border-right: 1px solid #000 !important; }
+  .cs .et { border-top: 1px solid #000 !important; }
+  .cs .eb { border-bottom: 1px solid #000 !important; }
+  .cs .fb { font-weight: 700; }
+  .cs .fc { text-align: center; }
+  .cs .fr { text-align: right; }
+  .cs .fg { background: #c0c0c0 !important; }
+  .cs .fw { white-space: normal; vertical-align: top; }
+  .cs .lh { padding: 0; border: none !important; }
+  .cs .lhbox { position: relative; height: calc(var(--csrow) * 7); }
+  .cs .lhbox img, .cs .lhbx { position: absolute; }
+  .cs .lhaddr { height: auto; }
+  .cs .lhbx { border: 1px solid #000 !important; box-sizing: border-box; }
+
+  /* 30 · Letter to the buyer — their letterhead, the letter, and the client's
+     own signature and stamp at the foot of it. */
+  .ltb { --ltbpt: 0.79pt; --ltbrow: calc(var(--ltbpt) * 15);
+    font-family: Arial, Helvetica, sans-serif; font-size: calc(var(--ltbpt) * 10);
+    line-height: 1.25; color: #000; width: calc(var(--ltbpt) * 679); }
+  .ltb table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0; }
+  .ltb td { border: none !important; padding: 0 calc(var(--ltbpt) * 2); height: var(--ltbrow);
+    vertical-align: middle; white-space: nowrap; overflow: visible; }
+  .ltb .et { border-top: 1px solid #000 !important; }
+  .ltb .eb { border-bottom: 1px solid #000 !important; }
+  .ltb .fb { font-weight: 700; }
+  .ltb .fc { text-align: center; }
+  .ltb .fl { text-align: left; }
+  .ltb .lh { padding: 0; border: none !important; }
+  .ltb .lhbox { position: relative; height: calc(var(--ltbrow) * 7); }
+  .ltb .lhbox img, .ltb .lhbx { position: absolute; }
+  .ltb .lhaddr { height: auto; }
+  .ltb .lhbx { border: 1px solid #000 !important; box-sizing: border-box; }
+  .ltb .sgbox { padding: calc(var(--ltbpt) * 4) 0 0; height: auto; white-space: nowrap; }
+  .ltb .sgsign, .ltb .sgstamp { display: inline-block; height: auto; vertical-align: top; }
+  .ltb .sgstamp { margin-left: calc(var(--ltbpt) * 18); }
+
+  /* 31 · Commercial invoice — the customs book's frame without its rupee half. */
+  table.ci.ci31 .bnd { border: 1px solid #000 !important; font-weight: 700; }
+  table.ci.ci31 .dbl { border-top: 1px solid #000 !important; border-bottom: 3px double #000 !important; }
+  table.ci.ci31 .mer { font-weight: 700; text-decoration: underline; }
+
+  /* 32 · the buyer's copy of the packing list is signed and stamped. */
+  table.ci.pl .sgbox { text-align: left; vertical-align: middle; padding: 1px 4px; }
+  table.ci.pl .sgstamp { text-align: center; vertical-align: middle; padding: 1px 2px; }
+  /* Sized against the boxes they stand in, so neither can force a column wider
+     than the share of the form their own copy gives it. */
+  table.ci.pl .plsign { max-width: 82%; width: auto; height: auto; vertical-align: middle; }
+  table.ci.pl .plstamp { max-width: 88%; width: auto; height: auto; vertical-align: middle; }
+
+  /* 40 · Export bill regularisation — the letter to the bank, on the
+     declaration's own paper and at the scale their file prints it. */
+  /* The face is set a shade under the sheet's 10pt: the print engine measures
+     Arial a little wider than the spreadsheet does, and these paragraphs are
+     already broken to the lines their file breaks them on. */
+  .ebr { --ebrpt: 0.86pt; --ebrrow: calc(var(--ebrpt) * 12.75);
+    font-family: Arial, Helvetica, sans-serif; font-size: calc(var(--ebrpt) * 9.5);
+    line-height: 1.25; color: #000; width: calc(var(--ebrpt) * 501.6); }
+  .ebr table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0; }
+  /* Their letter is typed line by line, each already broken where their file
+     breaks it, so a line runs on over the white beside it rather than being
+     re-wrapped — which is what it does on the sheet. Only the boxes that ask
+     for it wrap. */
+  .ebr td { border: none !important; padding: 1px 3px; height: var(--ebrrow);
+    vertical-align: middle; white-space: pre; overflow: visible; }
+  .ebr .fw { white-space: pre-line; overflow: hidden; }
+  .ebr .el { border-left: 1px solid #000 !important; }
+  .ebr .er { border-right: 1px solid #000 !important; }
+  .ebr .et { border-top: 1px solid #000 !important; }
+  .ebr .eb { border-bottom: 1px solid #000 !important; }
+  /* The Calibri declarations under the letter are set justified in their
+     file, as the Arial letter above them is not. */
+  .ebr .fj { font-family: Calibri, Carlito, Arial, sans-serif; font-size: calc(var(--ebrpt) * 11);
+    text-align: justify; }
+  .ebr .fb { font-weight: 700; }
+  .ebr .fc { text-align: center; }
+  .ebr .fr { text-align: right; }
+  .ebr tr.pb { page-break-before: always; }
+  .ebr .lh { padding: 0; border: none !important; }
+  .ebr .lhbox { position: relative; height: calc(var(--ebrrow) * 8); }
+  .ebr .lhbox img, .ebr .lhbx { position: absolute; }
+  .ebr .lhaddr { height: auto; }
+  .ebr .lhbx { border: 1px solid #000 !important; box-sizing: border-box; }
 
   /* 19 and 20 · the packing list is typed in colour where the invoice book is
      not: the form's own labels are blue, the answers customs reads off the head
