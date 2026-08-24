@@ -1,6 +1,6 @@
 """FastAPI application entrypoint for the Jaikvin Global Export System.
 
-Three things happen here that are not routing:
+Four things happen here that are not routing:
 
   * **the secrets are checked before anything else.** A production process
     still carrying the placeholder JWT secret does not start — that secret is
@@ -13,13 +13,20 @@ Three things happen here that are not routing:
   * **every response carries the security headers.** They are the second wall:
     the escaping in the frontend is what should stop an injected script, and
     the CSP is what stops it doing anything useful if it ever gets through.
+  * **the instance is kept from spinning down.** On Render's free plan the
+    container stops after 15 minutes of quiet and the next visitor waits about
+    a minute for it to come back; a background task pings our own /health often
+    enough that the idle timer never expires. See app/keepalive.py.
 """
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from . import keepalive
 from .config import guard_secrets, settings
 from .database import Base, engine
 from . import models  # noqa: F401  (ensure models are registered before create_all)
@@ -42,7 +49,28 @@ run_migrations()
 
 _docs = {"docs_url": None, "redoc_url": None, "openapi_url": None} if settings.is_production else {}
 
-app = FastAPI(title=settings.app_name, version="2.0.0", **_docs)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start the keepalive pinger with the app, and stop it with the app.
+
+    Cancelling on shutdown matters more than it looks: without it a redeploy
+    can leave the loop mid-sleep while the event loop closes underneath it,
+    which surfaces as a traceback in the logs of an otherwise clean restart.
+    """
+    task = keepalive.start()
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
+app = FastAPI(title=settings.app_name, version="2.0.0", lifespan=lifespan, **_docs)
 
 
 # ---------- Security headers ----------
