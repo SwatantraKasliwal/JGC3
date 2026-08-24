@@ -65,6 +65,25 @@ class Settings(BaseSettings):
     lockout_hard_threshold: int = 10    # failures in a day before admin is needed
     lockout_window_hours: int = 24      # the window the hard count is read over
 
+    # ---------- Keeping the instance awake ----------
+    # Render's free plan stops the container after 15 minutes with no inbound
+    # request, and the visitor who arrives next waits about a minute for it to
+    # come back. A request to our own public URL every few minutes keeps the
+    # idle timer from ever running out — see app/keepalive.py, which also has
+    # the two caveats worth knowing (it cannot wake an instance that is already
+    # down, and never sleeping spends ~744 of the 750 free instance hours a
+    # workspace gets each month).
+    #
+    # Left off so a laptop does not sit in a loop calling itself. Turn it on in
+    # the host's environment, not in a file.
+    keepalive_enabled: bool = False
+    # Blank means "ask the platform": Render injects RENDER_EXTERNAL_URL, so a
+    # deployment needs nothing here and cannot be left pinging the old address
+    # after a rename. Set it for anywhere that does not inject a URL.
+    keepalive_url: str = ""
+    # Must stay under the 15-minute timeout, with room for a slow ping.
+    keepalive_interval_minutes: int = 10
+
     # ---------- Rate limits ----------
     # Per-account limits are the ones that bite an attacker: they hold however
     # many addresses the traffic arrives from. Per-IP limits are deliberately
