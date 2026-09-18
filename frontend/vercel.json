@@ -4,8 +4,6 @@
   "outputDirectory": "dist",
   "framework": "vite",
 
-  "//": "There is deliberately no rewrite for /api here. A rewrite destination is a literal string, so the backend's address would have to be committed — and when the API moved to a different Render account the committed address was the stale one and every call failed. api/[...path].js does the same forwarding from API_ORIGIN, set in Vercel's own environment variables, so neither host is written down in this repository.",
-
   "headers": [
     {
       "source": "/(.*)",
