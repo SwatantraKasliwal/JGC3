@@ -154,8 +154,14 @@ html {
 #root {
   zoom: var(--app-zoom);
 }
+/* --base-zoom is the size the app is drawn at (1 on a phone — see the end of
+   this file). --text-scale is the person's own text size from the profile
+   menu, 0.8–1.2 (lib/textSize.js sets it). Everything zooms by the two
+   together. */
 :root {
-  --app-zoom: 1.12;
+  --base-zoom: 1.12;
+  --text-scale: 1;
+  --app-zoom: calc(var(--base-zoom) * var(--text-scale));
 }
 
 body {
@@ -747,7 +753,7 @@ textarea {
   font-size: 12.5px;
   line-height: 1.45;
   width: 248px;
-  max-width: calc(100vw - 24px);
+  max-width: calc(100vw / var(--app-zoom) - 24px);
   z-index: 70;
   box-shadow: var(--shadow-2);
   pointer-events: none;
@@ -1239,15 +1245,18 @@ textarea {
    covering ~75% of the screen with ~20% larger type. `transform: scale(1.2)`
    from the centre grows the whole subtree — inline pixel fonts included —
    while flexbox keeps the layout box centred, so it never drifts off-centre.
-   Declared 62vw × 1.2 ≈ 75vw wide, 62vh × 1.2 ≈ 74vh tall. */
+   Declared 62vw × 1.2 ≈ 75vw wide, 62vh × 1.2 ≈ 74vh tall.
+   A larger text size (--text-scale) zooms the panel too, so its viewport
+   lengths are divided back by it: the panel keeps its place on the screen
+   and the bigger type scrolls inside it instead of running off the edges. */
 .modal,
 .drawer {
   background: var(--surface);
   border-radius: var(--r-lg);
-  width: 62vw;
+  width: calc(62vw / var(--text-scale));
   max-width: 1180px;
   height: auto;
-  max-height: 66vh;
+  max-height: calc(66vh / var(--text-scale));
   display: flex;
   flex-direction: column;
   box-shadow: var(--shadow-3);
@@ -1260,14 +1269,14 @@ textarea {
    as three-quarters of the screen with the buttons a hand-span apart. */
 .modal-sm {
   width: 440px;
-  max-width: 92vw;
-  max-height: 74vh;
+  max-width: calc(92vw / var(--text-scale));
+  max-height: calc(74vh / var(--text-scale));
 }
 @media (max-width: 1100px) {
   .modal,
   .drawer {
-    width: 78vw;
-    max-height: 72vh;
+    width: calc(78vw / var(--text-scale));
+    max-height: calc(72vh / var(--text-scale));
     transform: scale(1.1);
   }
   .modal-sm {
@@ -1277,13 +1286,13 @@ textarea {
 @media (max-width: 720px) {
   .modal,
   .drawer {
-    width: 94vw;
-    max-height: 84vh;
+    width: calc(94vw / var(--text-scale));
+    max-height: calc(84vh / var(--text-scale));
     transform: none;
   }
   .modal-sm {
-    width: 94vw;
-    max-height: 86vh;
+    width: calc(94vw / var(--text-scale));
+    max-height: calc(86vh / var(--text-scale));
   }
 }
 @keyframes pop {
@@ -1323,6 +1332,33 @@ textarea {
   padding: 13px 18px;
   border-top: 1px solid var(--border);
   background: var(--surface-2);
+}
+/* Totals at the foot of a guided sheet (FootStats in components/ui):
+   "label : figure", one a line, with the colons lined up. */
+.foot-stats {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  column-gap: 8px;
+  row-gap: 1px;
+  align-items: baseline;
+  margin: 0;
+  line-height: 1.25;
+}
+.foot-stats dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+.foot-stats dd {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 750;
+  color: var(--ink);
+}
+.foot-stats dd::before {
+  content: ":";
+  margin-right: 7px;
+  font-weight: 500;
+  color: var(--faint);
 }
 
 /* Guided sheet — now a centred panel, sharing the .modal sizing rule above. */
@@ -2438,7 +2474,7 @@ textarea {
   right: 0;
   z-index: 60;
   width: 288px;
-  max-width: calc(100vw - 24px);
+  max-width: calc(100vw / var(--app-zoom) - 24px);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -2483,6 +2519,19 @@ textarea {
 .acct-row-l svg { color: var(--muted); }
 .seg.acct-seg { padding: 2px; }
 .seg.acct-seg button { padding: 5px 9px; font-size: 12.5px; gap: 5px; }
+/* The step the text size is on, under its label. */
+.acct-row-sub { display: block; margin-top: 2px; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+/* Text size: five square "A" buttons, each a size up, on one shared baseline. */
+.seg.ts-seg { flex-wrap: nowrap; }
+.seg.ts-seg button {
+  width: 26px;
+  height: 28px;
+  padding: 0 0 5px;
+  justify-content: center;
+  align-items: flex-end;
+  font-weight: 700;
+  line-height: 1;
+}
 .acct-item {
   display: flex;
   align-items: center;
@@ -3858,25 +3907,27 @@ textarea {
 /* ============================================================
    Phones: no zoom.
 
-   The app is drawn at --app-zoom (1.12) to read comfortably on a
+   The app is drawn at --base-zoom (1.12) to read comfortably on a
    monitor. On a phone that zoom did harm: every vw and vh inside
    it is zoomed as well, so a dialog declared 94vw wide came out at
    105 % of the screen and the menu sheet ran off the bottom — and
    a 412px screen was left with 368px to lay out in. Phones get the
    page at its natural size instead; the boxes people type into
    are set at 16px, the size below which iOS zooms the page on
-   focus.
+   focus. A text size picked in the profile menu still applies.
    ============================================================ */
 @media (max-width: 760px) {
   :root {
-    --app-zoom: 1;
+    --base-zoom: 1;
   }
+  /* 16px as it lands on the screen: a smaller text size zooms the box down,
+     so it is declared that much larger to keep iOS from zooming on focus. */
   .input,
   .input-sm,
   .select,
   .sel-search input,
   textarea.input {
-    font-size: 16px;
+    font-size: max(16px, calc(16px / var(--text-scale)));
   }
 }
 

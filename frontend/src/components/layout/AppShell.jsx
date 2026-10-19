@@ -2,13 +2,14 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Anchor, Sun, Moon, LogOut, Search, ChevronDown, CornerDownLeft, FileText, Menu, X,
-  ShieldCheck, User as UserIcon,
+  ShieldCheck, User as UserIcon, Type,
 } from "lucide-react";
 import { useAuth } from "../../auth/AuthProvider.jsx";
 import { useBadges } from "../../api/hooks.js";
 import { VIEWS, MENU, SETUP, ROUTE_TITLES } from "../../lib/nav.js";
 import { DOC_GROUPS, DOC_META } from "../../lib/docs.js";
 import { APP_VERSION, versionLabel } from "../../lib/releases.js";
+import { TEXT_SIZES, textSizeOf, readTextSize, applyTextSize } from "../../lib/textSize.js";
 import { WhatsNewModal, ReleaseNotesModal } from "./ReleaseNotes.jsx";
 
 /* Top navigation + page chrome. Feature pages render into <Outlet />.
@@ -31,8 +32,8 @@ const seenVersion = (uid) => { try { return localStorage.getItem(SEEN_KEY(uid));
 const markSeen = (uid) => { try { localStorage.setItem(SEEN_KEY(uid), APP_VERSION); } catch (e) { /* ignore */ } };
 
 /* The profile: first name in the bar; the rest — full name, address, role,
-   the theme and the way out — one click away. */
-function ProfileMenu({ user, isAdmin, theme, setTheme, logout }) {
+   the theme, the text size and the way out — one click away. */
+function ProfileMenu({ user, isAdmin, theme, setTheme, textSize, setTextSize, logout }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -76,6 +77,22 @@ function ProfileMenu({ user, isAdmin, theme, setTheme, logout }) {
               <button type="button" className={theme === "dark" ? "on" : ""} onClick={() => setTheme("dark")}>
                 <Moon size={13} /> Dark
               </button>
+            </span>
+          </div>
+          {/* Five steps, smallest to largest — each "A" drawn a size up from
+              the one before, so the row reads as the scale it sets. */}
+          <div className="acct-row">
+            <span className="acct-row-l">
+              <Type size={15} />
+              <span>Text size<span className="acct-row-sub">{textSizeOf(textSize).label}</span></span>
+            </span>
+            <span className="seg acct-seg ts-seg" role="group" aria-label="Text size">
+              {TEXT_SIZES.map((s, i) => (
+                <button key={s.k} type="button" className={textSize === s.k ? "on" : ""}
+                  onClick={() => setTextSize(s.k)} title={s.label} aria-label={s.label} aria-pressed={textSize === s.k}>
+                  <span style={{ fontSize: 10 + i * 1.75 }}>A</span>
+                </button>
+              ))}
             </span>
           </div>
           <button type="button" className="acct-item danger" role="menuitem" onClick={() => { setOpen(false); logout(); }}>
@@ -163,6 +180,10 @@ export default function AppShell() {
     document.documentElement.setAttribute("data-theme", theme);
     try { localStorage.setItem("jg-theme", theme); } catch (e) { /* ignore */ }
   }, [theme]);
+
+  // Already on the page from main.jsx; this keeps it in step with the menu.
+  const [textSize, setTextSize] = useState(readTextSize);
+  useEffect(() => { applyTextSize(textSize); }, [textSize]);
 
   /* The one-time "what's new" popup: shown the first time each person signs in
      after an update, then not again until the next one. */
@@ -307,7 +328,8 @@ export default function AppShell() {
           </nav>
 
           <div className="topnav-right" ref={rightRef}>
-            <ProfileMenu user={user} isAdmin={isAdmin} theme={theme} setTheme={setTheme} logout={logout} />
+            <ProfileMenu user={user} isAdmin={isAdmin} theme={theme} setTheme={setTheme}
+              textSize={textSize} setTextSize={setTextSize} logout={logout} />
           </div>
         </div>
 

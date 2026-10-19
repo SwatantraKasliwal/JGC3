@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { PackageCheck, Check, Search, Boxes, Trash2 } from "lucide-react";
 import {
   Card, CardHead, Btn, Field, Input, NumberInput, Select, Pill, Mono, DataTable, Drawer, Step,
-  Empty, SearchInput,
+  Empty, SearchInput, FootStats,
 } from "../../components/ui/index.jsx";
 import {
   useGroupedItems, useBuyers, useSuppliers, useTransports, useInvoiceMutations, useBalance,
@@ -214,11 +214,13 @@ export default function RecordPackingDrawer({ onClose }) {
     <Drawer title="Record packing" subtitle="Boxes you enter here clear the oldest open order first."
       icon={PackageCheck} onClose={onClose}
       footer={<>
-        <span style={{ fontSize: 12, color: "var(--muted)" }}>
-          {rows.length
-            ? <>{rows.length} line{rows.length === 1 ? "" : "s"} · <b style={{ color: "var(--ink)" }}>{totalBoxes} boxes</b> · {num(totalVol, 3)} m³</>
-            : "Enter boxes packed to begin"}
-        </span>
+        {/* The summary table's own totals, plus the serial block the invoice
+            will number its cartons with. */}
+        <FootStats empty="Enter boxes packed to begin" items={rows.length ? [
+          { label: "Boxes", value: num(totalBoxes, 0) },
+          { label: "Volume m³", value: num(totalVol, 3) },
+          { label: "Carton serials", value: `${Number(serialStart) || 0}–${(Number(serialStart) || 0) + totalBoxes - 1}` },
+        ] : []} />
         <div className="row" style={{ gap: 8 }}>
           <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
           <Btn icon={Check} disabled={!invoiceNo || !rows.length || create.isPending} onClick={save}>

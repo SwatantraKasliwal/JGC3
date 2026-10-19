@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import {
   X, Pencil, Inbox, Loader2, AlertTriangle, Eye, EyeOff, Check, Circle,
   HelpCircle, Search, ChevronRight, ChevronDown, FileSpreadsheet, FileDown, FileType,
@@ -285,6 +285,25 @@ export const Step = ({ n, title, hint }) => (
       {hint && <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 1 }}>{hint}</div>}
     </div>
   </div>
+);
+
+/* The running totals at the foot of a guided sheet — one figure a line, the
+   way the office reads them out: "Pieces : 3,000". The labels stay quiet and
+   the figures carry the weight. `empty` is what shows before anything is
+   entered. */
+export const FootStats = ({ items, empty }) => (
+  items?.length
+    ? (
+      <dl className="foot-stats">
+        {items.map(({ label, value }) => (
+          <Fragment key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    )
+    : <span style={{ fontSize: 12, color: "var(--muted)" }}>{empty}</span>
 );
 
 /* DataTable — one table for the whole app.

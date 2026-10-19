@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ClipboardList, Check, Search, Trash2 } from "lucide-react";
 import {
   Card, Btn, Field, Input, NumberInput, Select, Pill, Mono, DataTable, Drawer, Step, Empty, SearchInput,
+  FootStats,
 } from "../../components/ui/index.jsx";
 import { useGroupedItems, useBuyers, useSuppliers, usePoMutations, useDerive } from "../../api/hooks.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
@@ -87,11 +88,13 @@ export default function NewOrderDrawer({ onClose }) {
     <Drawer title="New buyer order"
       icon={ClipboardList} onClose={onClose}
       footer={<>
-        <span style={{ fontSize: 12, color: "var(--muted)" }}>
-          {chosen.length
-            ? <>{chosen.length} line{chosen.length === 1 ? "" : "s"} · <b style={{ color: "var(--ink)" }}>{boxesExact(t.boxes_exact || 0)} boxes</b> <span style={{ color: "var(--faint)" }}>({t.boxes || 0} cartons)</span> · {num(t.vol_total || 0, 3)} m³</>
-            : "Type a quantity to begin"}
-        </span>
+        {/* The summary table's own totals, column by column. */}
+        <FootStats empty="Type a quantity to begin" items={chosen.length ? [
+          { label: "Pieces", value: num(t.qty || 0, 0) },
+          { label: "Boxes", value: boxesExact(t.boxes_exact || 0) },
+          { label: "Volume m³", value: num(t.vol_total || 0, 3) },
+          { label: "Label sheets", value: num(Math.round(t.sheets || 0), 0) },
+        ] : []} />
         <div className="row" style={{ gap: 8 }}>
           <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
           <Btn icon={Check} disabled={!po || !chosen.length || create.isPending} onClick={save}>

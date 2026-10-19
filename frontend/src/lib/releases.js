@@ -7,6 +7,16 @@
 
 export const RELEASES = [
   {
+    version: "7.3.1",
+    date: "2026-10-18",
+    notes: [
+      "New buyer order: totals at the foot, one a line — pieces, boxes, volume m³, label sheets.",
+      "Record packing: totals at the foot — boxes, volume m³ and the carton serials.",
+      "Profile menu → Text size: five steps, from Extra small to Extra large.",
+      "The text size is remembered on each computer, like the theme.",
+    ],
+  },
+  {
     version: "7.3.0",
     date: "2026-10-18",
     notes: [
