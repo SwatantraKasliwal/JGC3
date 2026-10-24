@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import {
-  Calculator, Check, Sliders, TrendingUp, TrendingDown, Percent, Boxes, BookOpen, Search,
+  Calculator, Check, Sliders, TrendingUp, TrendingDown, Percent, Boxes, Search,
 } from "lucide-react";
 import {
-  Card, CardHead, Btn, Field, Input, Select, Pill, Mono, Note, Stat, DataTable, Empty,
-  Spinner, ErrorState, SearchInput, Step, Info, DownloadPair,
+  Card, CardHead, Btn, Field, Input, Select, Pill, Mono, Stat, DataTable, Empty,
+  Spinner, ErrorState, SearchInput, Step, Info, DownloadPair, FormulaHelp,
 } from "../../components/ui/index.jsx";
 import {
   useCosting, useCostParams, useCostFormulas, useCostingMutations, useGroupedItems,
@@ -57,7 +57,6 @@ export default function CostingPanel() {
   const [sup, setSup] = useState("");
   const hidden = useHiddenFields();
   const [q, setQ] = useState("");
-  const [showFormulas, setShowFormulas] = useState(false);
 
   const groups = useGroupedItems({ q: useDebounced(q), supplier_id: sup }).data || [];
   const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
@@ -261,9 +260,8 @@ export default function CostingPanel() {
           <Step n="3" title="Check the working"
             hint="Landed cost per box, per piece, and the sell price that comes out of the exchange rate above." />
           <div className="row" style={{ gap: 8, marginBottom: 10 }}>
-            <Btn variant="ghost" size="sm" icon={BookOpen} onClick={() => setShowFormulas((s) => !s)}>
-              {showFormulas ? "Hide formulas" : "How it's worked out"}
-            </Btn>
+            <FormulaHelp title="How is the cost worked out?"
+              rows={(formulas.data || []).map((f) => [f.label, f.rule])} />
             <DownloadPair disabled={!rows.length}
               onExcel={() => downloadGridExcel(`Cost_working_${todayISO()}`, "Cost working", exportCols, rows, exportOpts)}
               onPDF={() => downloadGridPDF("Cost working", exportCols, rows, exportOpts)} />
@@ -286,20 +284,6 @@ export default function CostingPanel() {
           <CardHead icon={Calculator} title={`Cost working · ${rows.length} line${rows.length === 1 ? "" : "s"}`}>
             {preview.isFetching && <span style={{ fontSize: 11.5, color: "var(--faint)" }}>working…</span>}
           </CardHead>
-
-          {showFormulas && (
-            <div className="card-foot">
-              <Note tone="teal">
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "6px 18px" }}>
-                  {(formulas.data || []).map((f) => (
-                    <div key={f.label} style={{ fontSize: 12 }}>
-                      <b>{f.label}</b> — <span style={{ color: "var(--muted)" }}>{f.rule}</span>
-                    </div>
-                  ))}
-                </div>
-              </Note>
-            </div>
-          )}
 
           {rows.length ? (
             <DataTable serial columns={columns} rows={rows} rowKey={(r) => r.item_id} freeze={3} maxHeight={520} />

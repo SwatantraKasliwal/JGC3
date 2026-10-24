@@ -14,6 +14,7 @@ import {
   useMasterFormulas, useOrderMaster,
 } from "../../api/hooks.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
+import { useAuth } from "../../auth/AuthProvider.jsx";
 import { dmy, dmyNum, num, boxesExact, todayISO } from "../../lib/format.js";
 import { downloadGridExcel, downloadGridPDF } from "../../lib/download.js";
 import { hidePriceCols } from "../../lib/priceCols.js";
@@ -123,6 +124,7 @@ const clearedText = (list) => (list?.length ? list.map((c) => `${c.invoice_no} (
 const sum = (rows, k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
 
 function PoModal({ po, supplierId = "", onClose, onEdit }) {
+  const { isAdmin } = useAuth();
   const suppliers = useSuppliers().data || [];
   const buyers = useBuyers().data || [];
   const master = useOrderMaster(po.po);
@@ -177,7 +179,7 @@ function PoModal({ po, supplierId = "", onClose, onEdit }) {
           {buyer?.name || "—"} · ordered {dmy(po.date)} · {po.completed}/{po.ordered} boxes received
         </span>
         <div className="row wrap" style={{ gap: 8 }}>
-          <Btn variant="ghost" size="sm" icon={Pencil} onClick={onEdit}>Edit / delete</Btn>
+          <Btn variant="ghost" size="sm" icon={Pencil} onClick={onEdit}>{isAdmin ? "Edit / delete" : "Edit"}</Btn>
           <DownloadPair disabled={!rows.length}
             onExcel={() => downloadGridExcel(`PO_${po.po}${live ? "_" + supCode(live) : ""}`, `PO ${po.po}`, exportCols, rows, exportOpts)}
             onPDF={() => downloadGridPDF(exportOpts.title, exportCols, rows, exportOpts)} />
@@ -242,9 +244,11 @@ function PoModal({ po, supplierId = "", onClose, onEdit }) {
    The order as it should now read: retype a quantity, drop a line you no
    longer want, or add an item that was left off. Lines already on the order
    keep the price they were agreed at; a line added here is priced at today's
-   master, exactly as a fresh order would be. */
+   master, exactly as a fresh order would be. Deleting the whole order is
+   left to an admin (the API refuses anyone else). */
 function PoEditModal({ po, onClose }) {
   const { update, remove } = usePoMutations();
+  const { isAdmin } = useAuth();
   const suppliers = useSuppliers().data || [];
   const toast = useToast();
   const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
@@ -302,7 +306,7 @@ function PoEditModal({ po, onClose }) {
             <Btn variant="danger" size="sm" icon={Trash2} onClick={del}>Confirm delete</Btn>
             <Btn variant="ghost" size="sm" onClick={() => setConfirm(false)}>Keep</Btn>
           </span>
-          : <Btn variant="ghost" size="sm" icon={Trash2} onClick={() => setConfirm(true)}>Delete PO</Btn>}
+          : isAdmin ? <Btn variant="ghost" size="sm" icon={Trash2} onClick={() => setConfirm(true)}>Delete PO</Btn> : <span />}
         <div className="row" style={{ gap: 8 }}>
           <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
           <Btn size="sm" icon={Check} disabled={update.isPending || !lines.length} onClick={save}>Save changes</Btn>
@@ -372,7 +376,7 @@ function PoEditModal({ po, onClose }) {
         </XScroll>
       ) : (
         <Empty icon={ClipboardList} title="Every line has been removed">
-          An order needs at least one item. Add one above, or delete the order outright.
+          An order needs at least one item. Add one above{isAdmin ? ", or delete the order outright" : ""}.
         </Empty>
       )}
     </Modal>

@@ -7,6 +7,18 @@
 
 export const RELEASES = [
   {
+    version: "7.3.2",
+    date: "2026-10-24",
+    notes: [
+      "Only an admin can delete a purchase order or a recorded shipment (invoice).",
+      "Text size now changes only the text — the screen keeps its full width.",
+      "“How is this calculated?” is now a “?” — click it for the formulas in a popup.",
+      "Profile menu: a gear beside your name opens Setup → Users (admins).",
+      "New Jaikvin Global logo — top bar, sign-in screen and browser tab.",
+      "Sign-in screen: just the logo and the form, without the blurb.",
+    ],
+  },
+  {
     version: "7.3.1",
     date: "2026-10-18",
     notes: [

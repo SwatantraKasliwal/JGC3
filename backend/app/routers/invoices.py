@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import require
+from ..deps import require, require_admin
 from .. import models, schemas, calc, options
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
@@ -182,7 +182,9 @@ def update_invoice(iid: str, body: schemas.InvoiceUpdate, db: Session = Depends(
     return _out(inv, _po_legs(db))
 
 
-@router.delete("/{iid}", status_code=204, dependencies=[Depends(_write)])
+# A recorded shipment is the evidence the FIFO ledger is built on; only an
+# admin may delete one. Packing staff can still correct it by editing.
+@router.delete("/{iid}", status_code=204, dependencies=[Depends(require_admin)])
 def delete_invoice(iid: str, db: Session = Depends(get_db)):
     inv = db.get(models.Invoice, iid)
     if inv:

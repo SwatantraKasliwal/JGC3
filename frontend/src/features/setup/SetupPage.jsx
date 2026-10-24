@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Layers, Globe, Truck, Route, Users as UsersIcon, Plus, Trash2, AlertTriangle, SlidersHorizontal, Columns3 } from "lucide-react";
 import {
   Card, CardHead, Btn, Seg, Field, Input, Select, Pill, Mono, EditBtn, Empty, Note, Step,
@@ -139,6 +140,15 @@ export default function SetupPage() {
     if (tab === "doccols" && colsDirty) setLeaveTo(t);
     else setTabNow(t);
   };
+  /* ?tab=users — the gear in the profile menu. Taken once and cleared, so the
+     gear works again while Setup is already open. */
+  const [params, setParams] = useSearchParams();
+  const asked = params.get("tab");
+  useEffect(() => {
+    if (!asked) return;
+    if (asked === "users" && isAdmin) setTab("users");
+    setParams({}, { replace: true });
+  }, [asked]); // eslint-disable-line react-hooks/exhaustive-deps
   const options = useOptions().data || {};
   const portOpts = (options.ports_ship_to || []).map((p) => ({ value: p, label: p }));
   const buyerSchema = BUYER_SCHEMA(portOpts);

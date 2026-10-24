@@ -3,10 +3,12 @@
    Most of the app's type is inline pixel sizes, which a root font-size could
    never reach, so the whole UI is drawn at a CSS zoom instead (index.css:
    --app-zoom, 1.12 on a monitor and 1 on a phone). The step chosen here sets
-   --text-scale, which multiplies that zoom: type, spacing and controls grow
-   together the way browser zoom does. The popups divide their screen-sized
-   boxes by the same factor, so a larger step makes them hold less rather than
-   spill off the screen.
+   --text-scale, which multiplies that zoom for the page and its popups. The
+   screen itself does not change: the top bar, title bar and footer zoom back
+   out by the same factor, and the page divides its width and gutters by it,
+   so it still fills the window at every step — only the text in it changes
+   size. The popups divide their screen-sized boxes by the factor too, so a
+   larger step makes them hold less rather than spill off the screen.
 
    Remembered per browser, like the theme, and applied in main.jsx before the
    first paint, so the page never jumps size on load. Storage is in a try: a

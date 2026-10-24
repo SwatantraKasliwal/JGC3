@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  Anchor, Sun, Moon, LogOut, Search, ChevronDown, CornerDownLeft, FileText, Menu, X,
-  ShieldCheck, User as UserIcon, Type,
+  Sun, Moon, LogOut, Search, ChevronDown, CornerDownLeft, FileText, Menu, X,
+  ShieldCheck, User as UserIcon, Type, Settings,
 } from "lucide-react";
 import { useAuth } from "../../auth/AuthProvider.jsx";
 import { useBadges } from "../../api/hooks.js";
@@ -11,6 +11,7 @@ import { DOC_GROUPS, DOC_META } from "../../lib/docs.js";
 import { APP_VERSION, versionLabel } from "../../lib/releases.js";
 import { TEXT_SIZES, textSizeOf, readTextSize, applyTextSize } from "../../lib/textSize.js";
 import { WhatsNewModal, ReleaseNotesModal } from "./ReleaseNotes.jsx";
+import { BrandMark } from "../ui/index.jsx";
 
 /* Top navigation + page chrome. Feature pages render into <Outlet />.
 
@@ -32,8 +33,10 @@ const seenVersion = (uid) => { try { return localStorage.getItem(SEEN_KEY(uid));
 const markSeen = (uid) => { try { localStorage.setItem(SEEN_KEY(uid), APP_VERSION); } catch (e) { /* ignore */ } };
 
 /* The profile: first name in the bar; the rest — full name, address, role,
-   the theme, the text size and the way out — one click away. */
-function ProfileMenu({ user, isAdmin, theme, setTheme, textSize, setTextSize, logout }) {
+   the theme, the text size and the way out — one click away. An admin also
+   gets a gear beside their name that opens Setup → Users (the Users tab is
+   theirs alone, so nobody else is shown it). */
+function ProfileMenu({ user, isAdmin, theme, setTheme, textSize, setTextSize, logout, go }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -67,6 +70,12 @@ function ProfileMenu({ user, isAdmin, theme, setTheme, textSize, setTextSize, lo
                 {isAdmin ? "Admin" : "User"}
               </span>
             </span>
+            {isAdmin && (
+              <button type="button" className="acct-gear" role="menuitem" title="Settings — users and access"
+                aria-label="Settings — users and access" onClick={() => { setOpen(false); go("/setup?tab=users"); }}>
+                <Settings size={16} />
+              </button>
+            )}
           </div>
           <div className="acct-row">
             <span className="acct-row-l">{theme === "dark" ? <Moon size={15} /> : <Sun size={15} />} Theme</span>
@@ -315,7 +324,7 @@ export default function AppShell() {
           </button>
 
           <div className="brand" ref={brandRef}>
-            <div className="brand-mark"><Anchor size={19} color="#0b2c4d" strokeWidth={2.6} /></div>
+            <BrandMark />
             <div>
               <div className="brand-name">Jaikvin Global</div>
               <div className="brand-sub">EXPORT SYSTEM</div>
@@ -329,7 +338,7 @@ export default function AppShell() {
 
           <div className="topnav-right" ref={rightRef}>
             <ProfileMenu user={user} isAdmin={isAdmin} theme={theme} setTheme={setTheme}
-              textSize={textSize} setTextSize={setTextSize} logout={logout} />
+              textSize={textSize} setTextSize={setTextSize} logout={logout} go={nav} />
           </div>
         </div>
 
@@ -380,7 +389,12 @@ export default function AppShell() {
         </div>
 
         <footer className="footer">
-          <span>Maintained and Developed By <b style={{ color: "var(--ink)" }}>Avita Technologies</b></span>
+          <span>
+            Maintained and Developed By{" "}
+            <a className="footer-brand" href="https://avitatechnologies.com/" target="_blank" rel="noopener noreferrer">
+              Avita Technologies
+            </a>
+          </span>
           {/* On Setup the version opens the release notes; everywhere else it
               is just the version. */}
           {pathname === "/setup"
