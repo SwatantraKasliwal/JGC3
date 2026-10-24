@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Anchor, KeyRound, ShieldCheck, LogOut } from "lucide-react";
-import { Btn, Field, Note, PasswordInput, PasswordRules } from "../components/ui/index.jsx";
+import { KeyRound, ShieldCheck, LogOut } from "lucide-react";
+import { Btn, Field, Note, PasswordInput, PasswordRules, BrandMark } from "../components/ui/index.jsx";
 import { passwordOk } from "../lib/password.js";
 import { useAuth } from "./AuthProvider.jsx";
 import { versionLabel } from "../lib/releases.js";
@@ -48,9 +48,7 @@ export default function ForcePasswordChange() {
     <div className="login">
       <div className="login-brand">
         <div className="row" style={{ gap: 18 }}>
-          <div className="brand-mark" style={{ width: 76, height: 76, borderRadius: 20 }}>
-            <Anchor size={42} color="#0b2c4d" strokeWidth={2.6} />
-          </div>
+          <BrandMark size={76} />
           <div>
             <div style={{ fontWeight: 780, fontSize: 40, lineHeight: 1.1, color: "#fff", letterSpacing: "-0.5px" }}>Jaikvin Global</div>
             <div style={{ fontSize: 15, letterSpacing: 5, color: "#9fc0d8", marginTop: 6 }}>EXPORT SYSTEM</div>
@@ -110,7 +108,8 @@ export default function ForcePasswordChange() {
             </Btn>
           </div>
         </div>
-        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · {versionLabel()}</div>
+        <div className="login-foot">Maintained and developed by{" "}
+          <a className="footer-brand" href="https://avitatechnologies.com/" target="_blank" rel="noopener noreferrer">Avita Technologies</a> · {versionLabel()}</div>
       </div>
     </div>
   );

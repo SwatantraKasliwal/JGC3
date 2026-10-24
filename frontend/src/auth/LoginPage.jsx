@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Anchor, LogIn, ShieldCheck, KeyRound, Mail, User as UserIcon, Rocket,
+  LogIn, ShieldCheck, KeyRound, Mail, User as UserIcon, Rocket,
   MailCheck, ArrowLeft, RotateCw, Timer, Unlock, LockKeyhole,
 } from "lucide-react";
-import { Btn, Field, Input, Note, PasswordInput, PasswordRules } from "../components/ui/index.jsx";
+import { Btn, Field, Input, Note, PasswordInput, PasswordRules, BrandMark } from "../components/ui/index.jsx";
 import { passwordOk } from "../lib/password.js";
 import { useAuth } from "./AuthProvider.jsx";
 import { versionLabel } from "../lib/releases.js";
@@ -22,11 +22,6 @@ import { versionLabel } from "../lib/releases.js";
 
    A user meets the passcode face exactly once, on their first sign-in. An
    admin meets it once a day. */
-
-const POINTS = [
-  ["Admin", "creates users and ticks the areas each one can see"],
-  ["Users", "log in and find only their own work — no clutter, no risk"],
-];
 
 const OTP_BLURB = {
   user_first_login: "This is your first sign-in, so we are checking the address is yours. It is asked once — after this, your email and password are all you need.",
@@ -188,24 +183,14 @@ export default function LoginPage() {
   return (
     <div className="login">
       <div className="login-brand">
-        {/* The name is the whole statement here — no tagline above it. */}
+        {/* The mark and the name are the whole statement here — no tagline,
+            no blurb. */}
         <div className="row" style={{ gap: 18 }}>
-          <div className="brand-mark" style={{ width: 76, height: 76, borderRadius: 20 }}>
-            <Anchor size={42} color="#0b2c4d" strokeWidth={2.6} />
-          </div>
+          <BrandMark size={76} />
           <div>
             <div style={{ fontWeight: 780, fontSize: 40, lineHeight: 1.1, color: "#fff", letterSpacing: "-0.5px" }}>Jaikvin Global</div>
             <div style={{ fontSize: 15, letterSpacing: 5, color: "#9fc0d8", marginTop: 6 }}>EXPORT SYSTEM</div>
           </div>
-        </div>
-        <p style={{ marginTop: 26 }}>Orders, packing, shipment papers and costing — one login, and each person sees exactly the areas the admin has given them. Nothing more to learn.</p>
-        <div className="login-points">
-          {POINTS.map(([t, s]) => (
-            <div key={t} className="row" style={{ gap: 10, alignItems: "flex-start" }}>
-              <ShieldCheck size={16} style={{ color: "var(--amber)", flexShrink: 0, marginTop: 2 }} />
-              <span><b style={{ color: "#fff" }}>{t}</b> {s}</span>
-            </div>
-          ))}
         </div>
       </div>
 
@@ -328,7 +313,8 @@ export default function LoginPage() {
             )
           )}
         </div>
-        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · {versionLabel()}</div>
+        <div className="login-foot">Maintained and developed by{" "}
+          <a className="footer-brand" href="https://avitatechnologies.com/" target="_blank" rel="noopener noreferrer">Avita Technologies</a> · {versionLabel()}</div>
       </div>
     </div>
   );

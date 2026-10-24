@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import require
+from ..deps import require, require_admin
 from .. import models, schemas, calc, options
 
 router = APIRouter(prefix="/api/purchase-orders", tags=["purchase-orders"])
@@ -248,7 +248,9 @@ def update_purchase_order(po: str, body: schemas.PurchaseOrderUpdate, db: Sessio
     return {"po": new_po, "lines": len(kept)}
 
 
-@router.delete("/{po}", status_code=204, dependencies=[Depends(_write)])
+# Deleting an order takes its demand off every register at once, so it is
+# an admin's call; whoever enters orders can still edit them.
+@router.delete("/{po}", status_code=204, dependencies=[Depends(require_admin)])
 def delete_purchase_order(po: str, db: Session = Depends(get_db)):
     db.query(models.PurchaseOrderLine).filter(models.PurchaseOrderLine.po == po).delete()
     db.commit()

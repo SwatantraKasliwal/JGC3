@@ -6,6 +6,7 @@ import {
 import ItemPicker from "../../components/ItemPicker.jsx";
 import { useItems, useSuppliers, useInvoiceMutations, useOptions } from "../../api/hooks.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
+import { useAuth } from "../../auth/AuthProvider.jsx";
 import { bySequence } from "../../lib/sequence.js";
 
 /* Edit an invoice — number, date, serial start, and the lines themselves:
@@ -15,11 +16,13 @@ import { bySequence } from "../../lib/sequence.js";
 
    An item already on the invoice keeps the price it was raised at; a line
    added here is priced from the orders its boxes clear, exactly as recording
-   the packing would have priced it. */
+   the packing would have priced it. Deleting the invoice outright is left to
+   an admin (the API refuses anyone else). */
 export default function InvoiceEditModal({ inv, onClose }) {
   const items = useItems().data || [];
   const suppliers = useSuppliers().data || [];
   const { update, remove } = useInvoiceMutations();
+  const { isAdmin } = useAuth();
   const toast = useToast();
 
   const [invoiceNo, setInvoiceNo] = useState(inv.invoice_no);
@@ -89,7 +92,7 @@ export default function InvoiceEditModal({ inv, onClose }) {
             <Btn variant="danger" size="sm" icon={Trash2} onClick={del}>Confirm delete</Btn>
             <Btn variant="ghost" size="sm" onClick={() => setConfirm(false)}>Keep</Btn>
           </span>
-          : <Btn variant="ghost" size="sm" icon={Trash2} onClick={() => setConfirm(true)}>Delete invoice</Btn>}
+          : isAdmin ? <Btn variant="ghost" size="sm" icon={Trash2} onClick={() => setConfirm(true)}>Delete invoice</Btn> : <span />}
         <div className="row" style={{ gap: 8 }}>
           <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
           <Btn size="sm" icon={Check} disabled={update.isPending || !lines.length} onClick={save}>Save changes</Btn>
@@ -160,7 +163,7 @@ export default function InvoiceEditModal({ inv, onClose }) {
         </XScroll>
       ) : (
         <Empty icon={FileText} title="Every line has been removed">
-          An invoice needs at least one item. Add one above, or delete the invoice outright.
+          An invoice needs at least one item. Add one above{isAdmin ? ", or delete the invoice outright" : ""}.
         </Empty>
       )}
     </Modal>

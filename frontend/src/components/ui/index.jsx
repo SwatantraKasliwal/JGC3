@@ -1,7 +1,7 @@
 import { Fragment, forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import {
   X, Pencil, Inbox, Loader2, AlertTriangle, Eye, EyeOff, Check, Circle,
-  HelpCircle, Search, ChevronRight, ChevronDown, FileSpreadsheet, FileDown, FileType,
+  HelpCircle, Search, ChevronRight, FileSpreadsheet, FileDown, FileType,
 } from "lucide-react";
 import { passwordRules } from "../../lib/password.js";
 import { useIsMobile } from "../../lib/useIsMobile.js";
@@ -47,6 +47,13 @@ export const CardHead = ({ icon: Icon, title, children }) => (
   </div>
 );
 
+/* The Jaikvin Global mark — the globe and arrow, on a white tile so the dark
+   arrow still reads against the navy bar. `size` is the tile's side in px. */
+export const BrandMark = ({ size = 36 }) => (
+  <div className="brand-mark" style={size === 36 ? undefined : { width: size, height: size, borderRadius: Math.round(size * 0.26) }}>
+    <img src="/brand-logo.png" alt="Jaikvin Global" draggable={false} />
+  </div>
+);
 export const Eyebrow = ({ children }) => <div className="eyebrow">{children}</div>;
 export const Mono = ({ children }) => <span className="mono">{children}</span>;
 export const Pill = ({ children, tone = "" }) => <span className={`pill${tone ? " pill-" + tone : ""}`}>{children}</span>;
@@ -506,33 +513,36 @@ export function DataTable({
   );
 }
 
-/* Collapsible "how is this calculated?" panel. */
-export function FormulaPanel({ title, intro, rows }) {
+/* "How is this calculated?" — a round "?" that opens the heading and the
+   formulas in a popup. `rows` is [figure, formula] pairs. */
+export function FormulaHelp({ title, intro, rows }) {
   const [open, setOpen] = useState(false);
   if (!rows?.length) return null;
   return (
-    <Card>
-      <button onClick={() => setOpen(!open)} style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "13px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
-        <HelpCircle size={15} style={{ color: "var(--teal)" }} />
-        <span style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>{title}</span>
-        <ChevronDown size={16} style={{ marginLeft: "auto", color: "var(--faint)", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
-      </button>
+    <>
+      <button type="button" className="help-q" onClick={() => setOpen(true)} title={title} aria-label={title}>?</button>
       {open && (
-        <div style={{ padding: "0 16px 16px" }}>
-          {intro && <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 12px", lineHeight: 1.55 }}>{intro}</p>}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", columnGap: 28 }}>
+        <Modal size="sm" className="formula-modal" title={title} icon={HelpCircle} onClose={() => setOpen(false)}
+          footer={<><span /><Btn size="sm" variant="ghost" onClick={() => setOpen(false)}>Close</Btn></>}>
+          {intro && <p className="formula-intro">{intro}</p>}
+          <dl className="formula-list">
             {rows.map(([f, formula]) => (
-              <div key={f} className="row" style={{ justifyContent: "space-between", gap: 12, padding: "6px 0", borderBottom: "1px solid var(--border)", alignItems: "baseline" }}>
-                <span style={{ fontSize: 12.5, color: "var(--ink)", fontWeight: 600, whiteSpace: "nowrap" }}>{f}</span>
-                <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--teal-ink)", textAlign: "right" }}>{formula}</span>
+              <div key={f} className="formula-row">
+                <dt>{f}</dt>
+                <dd>{formula}</dd>
               </div>
             ))}
-          </div>
-        </div>
+          </dl>
+        </Modal>
       )}
-    </Card>
+    </>
   );
 }
+
+/* The same "?", at the foot of a page — where the old collapsible panel sat. */
+export const FormulaPanel = (props) => (
+  props.rows?.length ? <div className="help-foot"><FormulaHelp {...props} /></div> : null
+);
 
 /* Every report and every document downloads the same two ways. The pair is a
    component so no screen can offer one format and forget the other. */
