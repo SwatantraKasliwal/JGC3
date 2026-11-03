@@ -28,6 +28,7 @@ def all_options(db: Session = Depends(get_db)):
     out = {key: options.get_list(db, key) for key in options.LISTS}
     out["banks"] = options.get_banks(db)
     out["item_sequence"] = options.get_sequence(db)
+    out["item_groups"] = options.get_groups(db)
     out["labels"] = {key: label for key, (label, _) in options.LISTS.items()}
     return out
 
@@ -171,3 +172,10 @@ def save_doc_columns(rules: list[dict] = Body([], embed=True), db: Session = Dep
 @router.put("/item-sequence", dependencies=[Depends(_write_items)])
 def save_item_sequence(body: ListBody, db: Session = Depends(get_db)):
     return {"values": options.save_sequence(db, body.values)}
+
+
+# ---------- the item groups ----------
+
+@router.put("/item-groups", dependencies=[Depends(_write_items)])
+def save_item_groups(ranges: dict = Body({}, embed=True), db: Session = Depends(get_db)):
+    return {"ranges": options.save_groups(db, ranges)}

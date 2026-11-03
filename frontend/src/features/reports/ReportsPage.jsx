@@ -93,7 +93,7 @@ export default function ReportsPage() {
   ], hidden);
 
   const exportTitle = `37 · Balance order — PO wise (buyer)${sup ? ` · ${supCode(sup)}` : ""}`;
-  const exportOpts = { title: exportTitle, subtitle: `${sup ? supCode(sup) : "All suppliers · item sequence"} · as on ${todayISO()}` };
+  const exportOpts = { title: exportTitle, subtitle: `${sup ? supCode(sup) : "All suppliers · in supplier sequence"} · as on ${todayISO()}` };
 
   const segOptions = [
     ...(canBalance ? [["po", "By purchase order", ClipboardList], ["item", "By item", Layers]] : []),

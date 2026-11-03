@@ -61,6 +61,10 @@ def derive(rows: list[schemas.ItemDeriveIn], db: Session = Depends(get_db)):
             "supplier_id": it.supplier_id, "packing": it.packing,
             **calc.derive_line(it, r.qty, r.rbi),
         })
+    # In the item sequence, blocks and all (Setup → Additional settings), so a
+    # summary reads in the order the order's documents will print it.
+    rank = options.item_rank(db)
+    out.sort(key=lambda x: rank(items[x["item_id"]]))
     # "qty" leads the list: the summary table's Pieces column totals every
     # line, so 3,000 + 4,000 reads as 7,000 rather than as a blank.
     sums = ("qty", "boxes", "boxes_exact", "vol_total", "net_total", "gross_total",

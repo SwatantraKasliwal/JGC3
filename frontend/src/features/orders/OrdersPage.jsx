@@ -20,6 +20,7 @@ import { downloadGridExcel, downloadGridPDF } from "../../lib/download.js";
 import { hidePriceCols } from "../../lib/priceCols.js";
 import { useIsMobile } from "../../lib/useIsMobile.js";
 import { useHiddenFields, pruneColumns } from "../../lib/columnPrefs.js";
+import { useBlockHeads } from "../../lib/useBlockHeads.js";
 import NewOrderDrawer from "./NewOrderDrawer.jsx";
 
 /* Purchase Orders — everything the buyer has asked for.
@@ -151,7 +152,9 @@ function PoModal({ po, supplierId = "", onClose, onEdit }) {
   // A supplier that has no lines on this order would show an empty table with
   // no way back, so the filter falls away rather than stranding the reader.
   const live = sup && onPo.includes(sup) ? sup : "";
-  const rows = live ? all.filter((r) => r.supplier_id === live) : all;
+  const rows = useMemo(() => (live ? all.filter((r) => r.supplier_id === live) : all), [all, live]);
+  // Oswin, then Oswin · PMF … — the blocks the order's documents print in.
+  const heads = useBlockHeads(rows);
 
   /* Narrowed to one factory the totals must be that factory's, so they are
      re-added from the rows on screen rather than read off the whole order. */
@@ -202,9 +205,10 @@ function PoModal({ po, supplierId = "", onClose, onEdit }) {
           )}
         </div>
       )}
-      {master.isLoading ? <Spinner label="Working out the order…" /> : (
+      {master.isLoading ? <Spinner label="Working out the order…" />
+        : master.isError ? <ErrorState error={master.error} onRetry={master.refetch} /> : (
         <DataTable serial
-          freeze={4}
+          freeze={4} section={(r, i) => heads[i]}
           columns={hidePriceCols([
             { key: "gd", w: 96, label: "GD code", render: (r) => <Mono>{r.gd}</Mono> },
             { key: "code", w: 92, label: "Code", render: (r) => <Mono>{r.code}</Mono> },
@@ -464,6 +468,7 @@ const PO_SUMMARY_EXPORT = (supCode, brand) => [
 /* ============================================================ */
 export default function OrdersPage() {
   const mobile = useIsMobile();
+  const toast = useToast();
   const [params, setParams] = useSearchParams();
   const hidden = useHiddenFields();
   const [tab, setTab] = useState("po");
@@ -494,6 +499,8 @@ export default function OrdersPage() {
     const want = params.get("po");
     if (!want || poq.isLoading) return;
     if (pos.some((p) => p.po === want)) { setTab("po"); setSel({ po: want, sup: "" }); }
+    // A link to an order that has since been deleted or renumbered says so.
+    else if (poq.data) toast(`Purchase order ${want} was not found — it may have been deleted or renumbered.`, { tone: "error" });
     setParams({}, { replace: true });
   }, [params, poq.isLoading, pos]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -503,6 +510,7 @@ export default function OrdersPage() {
     () => (bsSup ? detail.rows.filter((r) => r.supplier_id === bsSup) : detail.rows),
     [detail.rows, bsSup],
   );
+  const bsHeads = useBlockHeads(bsRows);
   const bsPos = useMemo(
     () => (bsSup ? detail.pos.filter((po) => bsRows.some((r) => r.per_po[po])) : detail.pos),
     [detail.pos, bsRows, bsSup],
@@ -670,9 +678,14 @@ export default function OrdersPage() {
       ) : (
         <Card>
           <CardHead icon={Boxes} title={`${bsRows.length} item${bsRows.length === 1 ? "" : "s"} · ${bsPos.length} PO column(s)${bsSup ? ` · ${supCode(bsSup)}` : ""}`} />
-          {bsRows.length ? (
-            <DataTable serial freeze={5} maxHeight={520} columns={buyersCols} rows={bsRows} rowKey={(r) => r.item_id} />
-          ) : <Empty icon={Boxes} title="No orders yet">Add a buyer order to see the item-wise summary.</Empty>}
+          {detailq.data === undefined ? (
+            detailq.isError ? <ErrorState error={detailq.error} onRetry={detailq.refetch} /> : <Spinner label="Working out the item-wise summary…" />
+          ) : bsRows.length ? (
+            <DataTable serial freeze={5} maxHeight={520} columns={buyersCols} rows={bsRows} rowKey={(r) => r.item_id}
+              section={(r, i) => bsHeads[i]} />
+          ) : <Empty icon={Boxes} title={bsSup ? `Nothing on order from ${supCode(bsSup)}` : "No orders yet"}>
+            {bsSup ? "Pick another supplier, or show all of them." : "Add a buyer order to see the item-wise summary."}
+          </Empty>}
         </Card>
       ))}
 

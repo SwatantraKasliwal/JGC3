@@ -1,8 +1,12 @@
 /* React Query hooks — the components' single door to server state.
    A tiny factory gives every master the same list/create/update/delete hooks,
    with cache invalidation wired so the UI refreshes after every mutation. */
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import * as api from "./endpoints.js";
+import { notifyError } from "../lib/errorBus.js";
+
+/* A save with no form of its own to show a failure in says so in a toast. */
+const loud = { onError: notifyError };
 
 function crudHooks(key, resource, extraInvalidate = []) {
   const useList = () => useQuery({ queryKey: [key], queryFn: resource.list });
@@ -48,8 +52,11 @@ export const { useCreate: useCreateItem, useUpdate: useUpdateItem, useRemove: us
 /* Items take optional server-side filters — { supplier_id, group, q }. The
    filters are part of the cache key, so switching supplier is instant once
    seen and a mutation still invalidates every variation. */
+/* A changed filter keeps the last answer on screen (marked as placeholder)
+   until the new one lands, so a list never flashes "no item matches" while
+   the search is still running — see ResultState. */
 export const useItems = (params) =>
-  useQuery({ queryKey: ["items", params || {}], queryFn: () => api.items.list(params) });
+  useQuery({ queryKey: ["items", params || {}], queryFn: () => api.items.list(params), placeholderData: keepPreviousData });
 
 export const useItemGroups = () =>
   useQuery({ queryKey: ["item-groups"], queryFn: api.items.groups });
@@ -57,7 +64,7 @@ export const useItemGroups = () =>
 /* The master keyed the way an order is placed — one product, then the
    suppliers who make it. */
 export const useGroupedItems = (params) =>
-  useQuery({ queryKey: ["items-grouped", params || {}], queryFn: () => api.items.grouped(params) });
+  useQuery({ queryKey: ["items-grouped", params || {}], queryFn: () => api.items.grouped(params), placeholderData: keepPreviousData });
 
 export const {
   useList: useTransports, useCreate: useCreateTransport,
@@ -78,6 +85,7 @@ export function useImportMasters() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (overwrite) => api.masters.import(overwrite),
+    ...loud,
     onSuccess: () => ["items", "item-groups", "suppliers", "buyers", "transports", ...DERIVED]
       .forEach((k) => qc.invalidateQueries({ queryKey: [k] })),
   });
@@ -116,9 +124,9 @@ export function usePoMutations() {
   const invalidate = () => ["po-list", "po-lines", "dashboard", "badges", "item-detail", "balance",
     "order-lines", "master-2a", "master-7a"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   return {
-    create: useMutation({ mutationFn: api.purchaseOrders.create, onSuccess: invalidate }),
-    update: useMutation({ mutationFn: ({ po, body }) => api.purchaseOrders.update(po, body), onSuccess: invalidate }),
-    remove: useMutation({ mutationFn: (po) => api.purchaseOrders.remove(po), onSuccess: invalidate }),
+    create: useMutation({ mutationFn: api.purchaseOrders.create, onSuccess: invalidate, ...loud }),
+    update: useMutation({ mutationFn: ({ po, body }) => api.purchaseOrders.update(po, body), onSuccess: invalidate, ...loud }),
+    remove: useMutation({ mutationFn: (po) => api.purchaseOrders.remove(po), onSuccess: invalidate, ...loud }),
   };
 }
 
@@ -129,9 +137,9 @@ export function useInvoiceMutations() {
   const invalidate = () => ["invoices", "dashboard", "badges", "po-list", "balance", "order-lines",
     "master-2a", "master-7a"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   return {
-    create: useMutation({ mutationFn: api.invoices.create, onSuccess: invalidate }),
-    update: useMutation({ mutationFn: ({ id, body }) => api.invoices.update(id, body), onSuccess: invalidate }),
-    remove: useMutation({ mutationFn: (id) => api.invoices.remove(id), onSuccess: invalidate }),
+    create: useMutation({ mutationFn: api.invoices.create, onSuccess: invalidate, ...loud }),
+    update: useMutation({ mutationFn: ({ id, body }) => api.invoices.update(id, body), onSuccess: invalidate, ...loud }),
+    remove: useMutation({ mutationFn: (id) => api.invoices.remove(id), onSuccess: invalidate, ...loud }),
   };
 }
 
@@ -158,8 +166,8 @@ export function useHiddenPoMutations() {
   const qc = useQueryClient();
   const invalidate = () => ["dashboard", "hidden-pos"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   return {
-    hide: useMutation({ mutationFn: (pos) => api.dashboard.hidePos(pos), onSuccess: invalidate }),
-    restore: useMutation({ mutationFn: (pos) => api.dashboard.restorePos(pos), onSuccess: invalidate }),
+    hide: useMutation({ mutationFn: (pos) => api.dashboard.hidePos(pos), onSuccess: invalidate, ...loud }),
+    restore: useMutation({ mutationFn: (pos) => api.dashboard.restorePos(pos), onSuccess: invalidate, ...loud }),
   };
 }
 
@@ -196,6 +204,7 @@ export function useApplyPrices() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (params) => api.purchaseOrders.applyPrices(params),
+    ...loud,
     onSuccess: () => ["price-drift", "pending-for-item", "po-list", "po-lines", "order-lines",
       "master-2a", "master-7a", "item-detail", "balance", "supply-details", "dashboard"]
       .forEach((k) => qc.invalidateQueries({ queryKey: [k] })),
@@ -212,16 +221,17 @@ export const useOptions = () =>
 export function useOptionMutations() {
   const qc = useQueryClient();
   const invalidate = () => ["options"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
-  /* The sequence reorders every list the API returns, so those are refetched
-     with it. */
-  const resequence = () => ["options", "items", "po-list", "item-detail", "balance", "supply-details",
-    "master-2a", "master-7a", "order-lines"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  /* The sequence and the item groups reorder every list the API returns, so
+     those are refetched with them. */
+  const resequence = () => ["options", "items", "items-grouped", "po-list", "item-detail", "balance", "supply-details",
+    "master-2a", "master-7a", "order-lines", "derive"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   return {
     saveList: useMutation({ mutationFn: ({ key, values }) => api.options.saveList(key, values), onSuccess: invalidate }),
     addBank: useMutation({ mutationFn: api.options.addBank, onSuccess: invalidate }),
     updateBank: useMutation({ mutationFn: ({ id, body }) => api.options.updateBank(id, body), onSuccess: invalidate }),
     removeBank: useMutation({ mutationFn: (id) => api.options.removeBank(id), onSuccess: invalidate }),
-    saveSequence: useMutation({ mutationFn: (values) => api.options.saveSequence(values), onSuccess: resequence }),
+    saveSequence: useMutation({ mutationFn: (values) => api.options.saveSequence(values), onSuccess: resequence, ...loud }),
+    saveGroups: useMutation({ mutationFn: (ranges) => api.options.saveGroups(ranges), onSuccess: resequence, ...loud }),
   };
 }
 
@@ -234,6 +244,7 @@ export function useSaveItemColumns() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (cols) => api.options.saveItemColumns(cols),
+    ...loud,
     onSuccess: (data) => qc.setQueryData(["item-columns"], data),
   });
 }
@@ -287,6 +298,7 @@ export function useSaveCosting() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: api.costing.upsert,
+    ...loud,
     onSuccess: () => ["costing", "cost-preview"].forEach((k) => qc.invalidateQueries({ queryKey: [k] })),
   });
 }
@@ -295,9 +307,9 @@ export function useCostingMutations() {
   const qc = useQueryClient();
   const invalidate = () => ["costing", "cost-params"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   return {
-    create: useMutation({ mutationFn: api.costing.create, onSuccess: invalidate }),
-    update: useMutation({ mutationFn: ({ id, body }) => api.costing.update(id, body), onSuccess: invalidate }),
-    remove: useMutation({ mutationFn: (id) => api.costing.remove(id), onSuccess: invalidate }),
-    saveParams: useMutation({ mutationFn: api.costing.saveParams, onSuccess: invalidate }),
+    create: useMutation({ mutationFn: api.costing.create, onSuccess: invalidate, ...loud }),
+    update: useMutation({ mutationFn: ({ id, body }) => api.costing.update(id, body), onSuccess: invalidate, ...loud }),
+    remove: useMutation({ mutationFn: (id) => api.costing.remove(id), onSuccess: invalidate, ...loud }),
+    saveParams: useMutation({ mutationFn: api.costing.saveParams, onSuccess: invalidate, ...loud }),
   };
 }

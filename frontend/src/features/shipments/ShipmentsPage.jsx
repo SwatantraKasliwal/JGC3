@@ -5,6 +5,7 @@ import {
   Card, CardHead, Btn, Pill, Mono, DataTable, Empty, Note, Stat, Spinner, ErrorState,
 } from "../../components/ui/index.jsx";
 import { useInvoices, useItems, useBuyers } from "../../api/hooks.js";
+import { useToast } from "../../providers/ToastProvider.jsx";
 import { dmy, num } from "../../lib/format.js";
 import { INV_STATUS_TONE } from "../../lib/constants.js";
 import InvoiceModal from "../packing/InvoiceModal.jsx";
@@ -16,6 +17,7 @@ import ShipmentWizard from "./ShipmentWizard.jsx";
    Ready to dispatch → Dispatched → Ready to Ship → Shipped. */
 export default function ShipmentsPage() {
   const nav = useNavigate();
+  const toast = useToast();
   const [openId, setOpenId] = useState(null);
   const [wizId, setWizId] = useState(null);
   const [editId, setEditId] = useState(null);
@@ -32,6 +34,8 @@ export default function ShipmentsPage() {
     const want = params.get("inv");
     if (!want || invq.isLoading) return;
     if (invoices.some((i) => i.id === want)) setOpenId(want);
+    // A link to an invoice that has since been deleted says so.
+    else if (invq.data) toast("That invoice was not found — it may have been deleted.", { tone: "error" });
     setParams({}, { replace: true });
   }, [params, invq.isLoading, invoices]); // eslint-disable-line react-hooks/exhaustive-deps
 

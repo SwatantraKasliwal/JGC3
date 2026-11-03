@@ -4,7 +4,7 @@ import {
 } from "lucide-react";
 import {
   Card, CardHead, Btn, Field, Input, Select, Pill, Mono, Stat, DataTable, Empty,
-  Spinner, ErrorState, SearchInput, Step, Info, DownloadPair, FormulaHelp,
+  Spinner, ErrorState, SearchInput, Step, Info, DownloadPair, FormulaHelp, ResultState,
 } from "../../components/ui/index.jsx";
 import {
   useCosting, useCostParams, useCostFormulas, useCostingMutations, useGroupedItems,
@@ -58,7 +58,9 @@ export default function CostingPanel() {
   const hidden = useHiddenFields();
   const [q, setQ] = useState("");
 
-  const groups = useGroupedItems({ q: useDebounced(q), supplier_id: sup }).data || [];
+  const dq = useDebounced(q);
+  const found = useGroupedItems({ q: dq, supplier_id: sup });
+  const groups = found.data || [];
   const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
   const supName = (id) => suppliers.find((s) => s.id === id)?.name || "—";
 
@@ -209,6 +211,8 @@ export default function CostingPanel() {
         </div>
         <Card>
           <div style={{ maxHeight: 360, overflowY: "auto" }}>
+            <ResultState query={found} count={groups.length} pending={dq !== q} loading="Loading items…"
+              empty={<Empty icon={Search} title="No item matches">Try the GD code, the item code, the supplier, or part of the description.</Empty>}>
             {groups.map((g, i) => (
               <div key={g.key} style={{ padding: "11px 14px", borderTop: i ? "1px solid var(--border)" : "none" }}>
                 <div className="row" style={{ marginBottom: 8 }}>
@@ -249,7 +253,7 @@ export default function CostingPanel() {
                 </div>
               </div>
             ))}
-            {!groups.length && <Empty icon={Search} title="No item matches">Try the GD code, the item code, the supplier, or part of the description.</Empty>}
+            </ResultState>
           </div>
         </Card>
       </section>
@@ -285,7 +289,11 @@ export default function CostingPanel() {
             {preview.isFetching && <span style={{ fontSize: 11.5, color: "var(--faint)" }}>working…</span>}
           </CardHead>
 
-          {rows.length ? (
+          {typed.length && !rows.length ? (
+            preview.isError
+              ? <ErrorState error={preview.error} onRetry={preview.refetch} title="Could not work out the cost" />
+              : <Spinner label="Working out the cost…" />
+          ) : rows.length ? (
             <DataTable serial columns={columns} rows={rows} rowKey={(r) => r.item_id} freeze={3} maxHeight={520} />
           ) : (
             <Empty icon={Calculator} title="Nothing costed yet">

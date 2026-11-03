@@ -523,6 +523,8 @@ class InvoiceLineOut(ORMModel):
     unit_fob100: Optional[float] = None
     fob_mode: Optional[str] = None
     position: Optional[int] = None
+    # The first carton number, allotted once and kept (calc.lock_serials).
+    serial_from: Optional[int] = None
 
 
 class InvoiceCreate(BaseModel):
@@ -550,6 +552,9 @@ class InvoiceUpdate(BaseModel):
     step_skip: Optional[dict[str, Any]] = None
     packing_transports: Optional[dict[str, Any]] = None
     lines: Optional[list[InvoiceLineIn]] = None
+    # True numbers every line afresh from the serial start, closing the gaps
+    # removed lines left. Otherwise allotted carton numbers are kept.
+    renumber: Optional[bool] = None
 
 
 class AllocationPreviewIn(BaseModel):
@@ -568,6 +573,8 @@ class InvoiceOut(ORMModel):
     buyer_id: Optional[str] = None
     rbi: float
     serial_start: int
+    # One past the highest carton number ever allotted (calc.serial_next_of).
+    serial_next: Optional[int] = None
     vehicles: dict[str, Any] = {}
     ship: dict[str, Any] = {}
     step_skip: dict[str, Any] = {}

@@ -17,6 +17,7 @@ _write = require("shipment.packing", "shipment.details")
 def _out(inv: models.Invoice, legs: dict | None = None) -> schemas.InvoiceOut:
     out = schemas.InvoiceOut.model_validate(inv)
     out.status = calc.invoice_status(inv)
+    out.serial_next = calc.serial_next_of(inv)
     if legs is not None:
         out.po_legs = legs.get(inv.invoice_no, {})
     return out
@@ -102,6 +103,13 @@ def _in_sequence(db: Session, lines) -> list:
     return sorted(lines, key=lambda l: rank(items[l.item_id]) if l.item_id in items else last)
 
 
+def _line_label(db: Session, line) -> str:
+    """"PE1548 (2001–2010)" — a line and its cartons, for an error message."""
+    it = db.get(models.Item, line.item_id)
+    name = (it.gd or it.code) if it else "a line"
+    return f"{name} ({line.serial_from}–{line.serial_from + int(line.boxes or 0) - 1})"
+
+
 # The key a preview's boxes are booked under in the ledger — never a real
 # invoice number, so it cannot be confused with one.
 _PREVIEW = "\x00preview"
@@ -147,6 +155,8 @@ def create_invoice(body: schemas.InvoiceCreate, db: Session = Depends(get_db)):
         vehicles={}, ship=dict(body.ship or {}), step_skip={},
     )
     inv.lines = _freeze_prices(db, _in_sequence(db, body.lines))
+    # Carton numbers are allotted now, down the lines in sequence, and kept.
+    inv.serial_next = calc.allot_serials(inv.lines, calc.serial_base(inv))
     db.add(inv)
     db.commit()
     db.refresh(inv)
@@ -160,8 +170,23 @@ def update_invoice(iid: str, body: schemas.InvoiceUpdate, db: Session = Depends(
         raise HTTPException(404, "Invoice not found")
     data = body.model_dump(exclude_unset=True)
     lines = data.pop("lines", None)
+    renumber = bool(data.pop("renumber", None))
+    # The carton numbers every line holds now, and the start they hang off.
+    old_base = calc.serial_base(inv)
+    old_next = calc.serial_next_of(inv)
+    held = {l.item_id: f for l, f in zip(inv.lines, calc.line_serial_froms(inv.lines, old_base))}
     for k, v in data.items():
         setattr(inv, k, v)
+    # A new serial start moves every allotted number by the same amount, so
+    # the gaps left by removed lines stay where they were.
+    shift = calc.serial_base(inv) - old_base
+    if lines is None and (shift or renumber):
+        if renumber:
+            inv.serial_next = calc.allot_serials(inv.lines, calc.serial_base(inv))
+        else:
+            for l in inv.lines:
+                l.serial_from = held[l.item_id] + shift
+            inv.serial_next = old_next + shift
     if lines is not None:
         # An item already on this invoice keeps the price it was raised at.
         keep = {
@@ -176,7 +201,22 @@ def update_invoice(iid: str, body: schemas.InvoiceUpdate, db: Session = Depends(
         # line it adds into its place in the item sequence.
         incoming = [SimpleNamespace(item_id=l["item_id"], supplier_id=l.get("supplier_id"),
                                     boxes=l.get("boxes", 0)) for l in lines]
-        inv.lines = _freeze_prices(db, incoming, keep=keep, exclude_invoice_id=inv.id)
+        new_lines = _freeze_prices(db, incoming, keep=keep, exclude_invoice_id=inv.id)
+        # Carton numbers already allotted stay with their line; a removed
+        # line's numbers are left unused, and a line new to the invoice takes
+        # the numbers after the highest ever allotted — unless asked to renumber.
+        if renumber:
+            inv.serial_next = calc.allot_serials(new_lines, calc.serial_base(inv))
+        else:
+            clashes, inv.serial_next = calc.lock_serials(
+                new_lines, {k: f + shift for k, f in held.items()}, calc.serial_base(inv), old_next + shift)
+            if clashes:
+                a, b = clashes[0]
+                db.rollback()
+                raise HTTPException(409, (
+                    f"Carton serials would overlap: {_line_label(db, a)} runs into {_line_label(db, b)}. "
+                    "Allotted serials stay fixed — lower the boxes, or choose “Renumber all cartons”."))
+        inv.lines = new_lines
     db.commit()
     db.refresh(inv)
     return _out(inv, _po_legs(db))

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { PackageCheck, Check, Search, Boxes, Trash2 } from "lucide-react";
 import {
   Card, CardHead, Btn, Field, Input, NumberInput, Select, Pill, Mono, DataTable, Drawer, Step,
-  Empty, SearchInput, FootStats,
+  Empty, SearchInput, FootStats, ResultState, Spinner, ErrorState,
 } from "../../components/ui/index.jsx";
 import {
   useGroupedItems, useBuyers, useSuppliers, useTransports, useInvoiceMutations, useBalance,
@@ -12,19 +12,21 @@ import { useToast } from "../../providers/ToastProvider.jsx";
 import { todayISO, num } from "../../lib/format.js";
 import { useDebounced } from "../../lib/useDebounced.js";
 import { transportsFor } from "../../lib/transports.js";
-import { sortBySequence } from "../../lib/sequence.js";
+import { sortBySequence, blockOf, blockHeads } from "../../lib/sequence.js";
 import ShipTermsFields from "../shipments/ShipTermsFields.jsx";
 
 /* Record packing — boxes clear the oldest open order first.
 
    The RBI reference rate lives here, not at order entry: it is the rate on
    the day the goods were packed, which is what the customs invoice and the
-   bank need. Serial (carton) numbers start here too. */
+   bank need. Serial (carton) numbers start here too — allotted when the
+   invoice is created and kept by each line from then on. */
 export default function RecordPackingDrawer({ onClose }) {
   const buyers = useBuyers().data || [];
   const suppliers = useSuppliers().data || [];
   const transports = useTransports().data || [];
-  const balance = useBalance().data;
+  const balanceQ = useBalance();
+  const balance = balanceQ.data;
   const { create } = useInvoiceMutations();
   const toast = useToast();
 
@@ -38,14 +40,18 @@ export default function RecordPackingDrawer({ onClose }) {
      to the invoice's shipment details, where they can still be changed. */
   const [ship, setShip] = useState({});
   const items = useItems().data || [];
-  const sequence = useOptions().data?.item_sequence;
+  const opts = useOptions().data;
+  const sequence = opts?.item_sequence;
+  const itemGroups = opts?.item_groups;
   const itemById = useMemo(() => Object.fromEntries(items.map((i) => [i.id, i])), [items]);
   const buyer = buyers.find((b) => b.id === buyerId);
   const [boxesBy, setBoxesBy] = useState({});
   const [q, setQ] = useState("");
   const [supFilter, setSupFilter] = useState("");
 
-  const fetched = useGroupedItems({ q: useDebounced(q), supplier_id: supFilter }).data || [];
+  const dq = useDebounced(q);
+  const found = useGroupedItems({ q: dq, supplier_id: supFilter });
+  const fetched = found.data || [];
   /* The picker above is filtered; the summary below and the supplier swap
      need the whole master. React Query caches both. */
   const allGroups = useGroupedItems({}).data || [];
@@ -167,16 +173,21 @@ export default function RecordPackingDrawer({ onClose }) {
         });
       }
     }));
-    const sorted = sortBySequence(out, {
-      suppliers, sequence, getItem: (r) => itemById[r.item_id] || { gd: r.gd, supplier_id: r.supplier_id },
+    const opt = {
+      suppliers, sequence, groups: itemGroups,
+      getItem: (r) => itemById[r.item_id] || { gd: r.gd, supplier_id: r.supplier_id },
       supplierOf: (r) => r.supplier_id,
-    });
+    };
+    const sorted = sortBySequence(out, opt);
+    // Where a block of a range opens (Oswin, then Oswin · PMF …) — the same
+    // breaks the documents print.
+    const heads = blockHeads(sorted, blockOf(opt));
     let sr = Number(serialStart) || 0;
-    return sorted.map((r) => {
+    return sorted.map((r, i) => {
       const from = sr; sr += r.boxes;
-      return { ...r, range: `${from}–${sr - 1}` };
+      return { ...r, range: `${from}–${sr - 1}`, head: heads[i] };
     });
-  }, [allGroups, boxesBy, suppliers, sequence, itemById, serialStart]);
+  }, [allGroups, boxesBy, suppliers, sequence, itemGroups, itemById, serialStart]);
 
   const totalBoxes = rows.reduce((s, r) => s + r.boxes, 0);
   const totalVol = rows.reduce((s, r) => s + r.volume, 0);
@@ -243,7 +254,7 @@ export default function RecordPackingDrawer({ onClose }) {
             <Field label="RBI rate ₹/$" hint="The Reserve Bank reference rate on the packing date — captured here, not at order entry.">
               <NumberInput className="rate" decimal value={rbi} onChange={setRbi} placeholder="e.g. 87.25" />
             </Field>
-            <Field label="Serial (carton) start" hint="The first carton number. Each line takes the next block of numbers in the item sequence — Oswin by bore, then VP-PP, Hansa-PP, Hansa-GRN, VP-GRN — so ranges never overlap.">
+            <Field label="Serial (carton) start" hint="The first carton number. Each line takes the next block of numbers in the supplier sequence — Oswin by bore, then VP-PP, Hansa-PP, Hansa-GRN, VP-GRN — so ranges never overlap. Once allotted, a line keeps its numbers: removing an item later leaves its numbers unused instead of shifting the rest.">
               <NumberInput value={serialStart} onChange={setSerialStart} placeholder="e.g. 2001" />
             </Field>
           </div>
@@ -265,6 +276,21 @@ export default function RecordPackingDrawer({ onClose }) {
           </div>
           <Card>
             <div style={{ maxHeight: 340, overflowY: "auto" }}>
+              {/* Nothing is called "clear" or "no match" before both the item
+                  list and the pending balances have actually arrived. */}
+              {balance === undefined ? (
+                balanceQ.isError
+                  ? <ErrorState error={balanceQ.error} onRetry={balanceQ.refetch} title="Could not work out what is still pending" />
+                  : <Spinner label="Working out what is still pending…" />
+              ) : (
+              <ResultState query={found} count={groups.length} pending={dq !== q} loading="Loading items…"
+                empty={(
+                  <Empty icon={Search} title="No item matches">
+                    {supFilter
+                      ? <>Nothing from {supCode(supFilter)}{q ? <> matches “{q}”</> : " is in the item master yet"}. Pick another supplier, or clear the search.</>
+                      : <>Try the GD code, item code, supplier or description.</>}
+                  </Empty>
+                )}>
               {groups.map((g, i) => {
                 const pi = projPending(g.variants);
                 // One divider between what is still owed and what is clear.
@@ -326,7 +352,8 @@ export default function RecordPackingDrawer({ onClose }) {
                   </div>
                 );
               })}
-              {!groups.length && <Empty icon={Search} title="No item matches">Try the GD code, item code, supplier or description.</Empty>}
+              </ResultState>
+              )}
             </div>
           </Card>
         </section>
@@ -378,7 +405,7 @@ export default function RecordPackingDrawer({ onClose }) {
                       ),
                     },
                   ]}
-                  rows={rows} rowKey={(r) => r.key}
+                  rows={rows} rowKey={(r) => r.key} section={(r) => r.head}
                   footer={[{ v: "Total", span: 4 }, { v: totalBoxes, align: "r" }, { v: num(totalVol, 3), align: "r" }, { v: "" }]}
                 />
               </Card>

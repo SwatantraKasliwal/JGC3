@@ -1,4 +1,4 @@
-import { L, P7, RS, RUPEE, USD, bcDescription, ddmm, esc, exRate, fitSheet, inr, poBannerList, poStack, sum, usd, wbRupee } from "./common.js";
+import { L, bandOpener, P7, RS, RUPEE, USD, bcDescription, ddmm, esc, exRate, fitSheet, inr, poBannerList, poStack, sum, usd, wbRupee } from "./common.js";
 
 /* Doc 9 · Sales (Supplier) — against 9-Sales.xlsx. The purchase sheet priced
    the other way round: FOB per piece in dollars, then the RBI reference in
@@ -43,13 +43,12 @@ export function supplierSalesSheet(ctx, rows) {
   ];
   const heights = [undefined, 12.75, undefined];
 
-  let band = firstBand;
+  const bandAt = bandOpener(rows, firstBand);
   let first = 0;
   let last = 0;
-  rows.forEach((r) => {
-    const g = String(r.it.group || "").trim();
-    if (g && g !== band) {
-      band = g;
+  rows.forEach((r, ri) => {
+    const g = bandAt(r, ri);
+    if (g) {
       out.push([{ v: "", s: S.sr }, { v: "", s: S.po },
         { v: g, s: S.bandC }, { v: "", s: S.bandD }, { v: "", s: S.gdC },
         ...[S.mid, S.mid, S.mid, S.mid, S.desc, S.bar, S.num, S.num, S.usd, S.usd, S.rs, S.inr]
@@ -112,13 +111,13 @@ export const B_9 = (ctx) => {
   const rows = L(ctx);
   const ex = exRate(ctx);
   const groups = [...new Set(rows.map((r) => String(r.it.group || "").trim()).filter(Boolean))];
-  let band = groups.length ? groups[0] : "";
+  const bandAt = bandOpener(rows, groups.length ? groups[0] : "");
   const usd2 = (n) => `$${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const rs2 = (n) => `Rs. ${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const body = rows.map((r) => {
+  const body = rows.map((r, ri) => {
     const it = r.it;
-    const g = String(it.group || "").trim();
-    const open = g && g !== band ? (band = g, `<tr class="band"><td></td><td></td>`
+    const g = bandAt(r, ri);
+    const open = g ? (`<tr class="band"><td></td><td></td>`
       + `<td class="gd" colspan="2">${esc(g)}</td>${"<td></td>".repeat(13)}</tr>`) : "";
     const perPc = r.pieces ? r.rbiTotal / r.pieces : 0;
     return `${open}<tr>

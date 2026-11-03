@@ -7,6 +7,23 @@
 
 export const RELEASES = [
   {
+    version: "7.4.0",
+    date: "2026-11-03",
+    notes: [
+      "Carton serials stay locked once allotted — removing an item leaves its numbers unused instead of shifting the rest (i1 = 1, i3 = 3).",
+      "An item added to an invoice later takes the numbers after the last one ever given; changing the serial start moves them all together.",
+      "Edit invoice: overlaps are flagged before saving, and “Renumber all cartons” closes the gaps when the numbers have not gone to customs.",
+      "Every paper (docs 7–9, 18, 19, 31 …) prints the same locked ranges; the shipping marks run from the first carton to the last.",
+      "Setup → Additional settings → Item groups: split a supplier's range into blocks and order them, and the items inside each.",
+      "Setup: “Item sequence” is now called “Supplier sequence”; Item groups sits beside it, a supplier at a time in a popup.",
+      "Oswin's PMF pipes print as their own block below the rest of Oswin — on order and invoice summaries and in every download.",
+      "Supplier PO (6) gives each block an annexure of its own; docs 1–5 and 7–9 head each block.",
+      "Item lists show “Loading…” while they load and “No item matches” only once the search has really come back empty.",
+      "Clearer screens when something goes wrong: offline, server not answering, not found, not allowed — each with a Retry.",
+      "A failed save now says so on screen; a page that fails to draw no longer leaves a blank screen; unknown links show “Page not found”.",
+    ],
+  },
+  {
     version: "7.3.2",
     date: "2026-10-24",
     notes: [

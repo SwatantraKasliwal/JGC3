@@ -1,4 +1,4 @@
-import { L, P7, RUPEE, bcDescription, ddmm, esc, fitSheet, hsnText, hsnValue, pctText, poBannerList, poStack, sum, supplierTax, wbRupee } from "./common.js";
+import { L, bandOpener, P7, RUPEE, bcDescription, ddmm, esc, fitSheet, hsnText, hsnValue, pctText, poBannerList, poStack, sum, supplierTax, wbRupee } from "./common.js";
 
 /* The GST the sheet closes on. Each supplier's lines are taxed at its own
    rate (18 % unless Setup → Suppliers gives it one), and under the heads its
@@ -57,15 +57,14 @@ export function supplierPurchaseSheet(ctx, rows) {
   ];
   const heights = [undefined, 12.75, undefined];
 
-  let band = firstBand;
+  const bandAt = bandOpener(rows, firstBand);
   let first = 0;
   let last = 0;
   const gst = purchaseGst(ctx, rows);
   const lineAt = [];                     // [sheet row, line] per goods line
-  rows.forEach((r) => {
-    const g = String(r.it.group || "").trim();
-    if (g && g !== band) {
-      band = g;
+  rows.forEach((r, ri) => {
+    const g = bandAt(r, ri);
+    if (g) {
       out.push([{ v: "", s: S.sr }, { v: "", s: S.po },
         { v: g, s: S.bandC }, { v: "", s: S.bandD }, { v: "", s: S.bandD },
         ...[S.mid, S.mid, S.mid, S.mid, S.desc, S.bar, S.hsn, S.num, S.num, S.money, S.money]
@@ -150,14 +149,14 @@ export function supplierPurchaseSheet(ctx, rows) {
 export const B_8 = (ctx) => {
   const rows = L(ctx);
   const groups = [...new Set(rows.map((r) => String(r.it.group || "").trim()).filter(Boolean))];
-  let band = groups.length ? groups[0] : "";
+  const bandAt = bandOpener(rows, groups.length ? groups[0] : "");
   const value = sum(rows, "valTotal");
   const gst = purchaseGst(ctx, rows);
   const gstTotal = gst.amount;
-  const body = rows.map((r) => {
+  const body = rows.map((r, ri) => {
     const it = r.it;
-    const g = String(it.group || "").trim();
-    const open = g && g !== band ? (band = g, `<tr class="band"><td></td><td></td>`
+    const g = bandAt(r, ri);
+    const open = g ? (`<tr class="band"><td></td><td></td>`
       + `<td class="gd" colspan="3">${esc(g)}</td>${"<td></td>".repeat(11)}</tr>`) : "";
     return `${open}<tr>
       <td class="c">${esc(r.range)}</td>

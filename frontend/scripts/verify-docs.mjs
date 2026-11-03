@@ -215,6 +215,44 @@ check("BL annexure (24)", "pieces by bore add up to the pipes invoiced", bores.r
 check("BL annexure (24)", "descriptions on one line", !bla.some((l) => l.includes("\n")));
 });
 
+// 6b · Oswin's PMF pipes print as a block of their own (Setup → Item groups)
+group("Item groups", () => {
+const gds = C.L(ctx).map((r) => r.it.gd);
+const at = (gd) => gds.indexOf(gd);
+check("Item groups", "PMF2524 follows every other Oswin line, ahead of Hansa",
+  at("PMF2524") > Math.max(at("PP1509"), at("90441600"), at("90446400"), at("90448820")) && at("PMF2524") < at("PET1512"), gds.join(", "));
+const heads = C.L(ctx).filter((r) => r.blockHead).map((r) => r.blockHead);
+check("Item groups", "each block opens under its own heading", heads.join(" | ") === "Oswin | Oswin · PMF | Hansa — PP | Hansa — GRN", heads.join(" | "));
+const t7 = text(html("7"));
+check("Item groups", "doc 7 rules a band in for the PMF block", /Oswin · PMF \d+-\d+ PO-C PMF2524/.test(t7));
+check("Item groups", "doc 1 (the order) heads the PMF block too", text(html("1")).includes("Oswin · PMF"));
+check("Item groups", "doc 6 gives the PMF pipes an annexure of their own",
+  C.supplierPoDocs(ctx).find((d) => d.supplierId === OSW)?.sheets.some((sh) => /PMF/.test(sh.name)));
+const one = JSON.parse(JSON.stringify(D));
+one.invoices[1].lines = one.invoices[1].lines.filter((l) => l.item_id === "i-pp1509" || l.item_id === "i-90441600");
+check("Item groups", "a paper that is all one block prints no headings", C.L(ctxOf(one)).every((r) => !r.blockHead));
+const merged = docCtx({ invoice: D.invoices[1], items: D.items, buyers: D.buyers, suppliers: D.suppliers, poLines: D.poLines,
+  transports: D.transports, invoices: D.invoices, groups: { Oswin: [] } });
+check("Item groups", "with the group removed, PMF sorts back in by bore", C.L(merged).filter((r) => r.blockHead).every((r) => !r.blockHead.includes("PMF")));
+});
+
+// 6c · carton serials, once allotted, stay with their line
+group("Locked serials", () => {
+const locked = JSON.parse(JSON.stringify(D));
+const inv = locked.invoices[1];
+let next = 2001;
+inv.lines.forEach((l) => { l.serial_from = next; next += l.boxes; });
+const range = (c, gd) => C.L(c).find((r) => r.it.gd === gd)?.range;
+const before = range(ctxOf(locked), "90446400");
+inv.lines = inv.lines.filter((l) => l.item_id !== "i-90441600");     // the supplier could not send it
+const c2 = ctxOf(locked);
+check("Locked serials", "removing a line leaves the next line's cartons where they were", range(c2, "90446400") === before, `${before} → ${range(c2, "90446400")}`);
+check("Locked serials", "PP1509 keeps 2001-2010", range(c2, "PP1509") === "2001-2010");
+const m = C.ciMarks(c2, C.L(c2));
+check("Locked serials", "the marks still run to the last carton allotted", m.start === 2001 && m.end === next - 1, `${m.start}-${m.end}`);
+check("Locked serials", "doc 7 prints the kept range", text(html("7", c2)).includes(before));
+});
+
 // 7 · the one-page declarations are laid out as full A4 sheets (13–16)
 group("A4 declarations", () => {
 for (const no of ["13", "14", "15", "16"]) check("A4 declarations", `doc ${no} is set as a full A4 page`, /class="(evd|dl just) a4"/.test(html(no)));

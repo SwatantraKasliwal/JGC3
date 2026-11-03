@@ -270,6 +270,11 @@ class Invoice(Base):
     buyer_id = Column(String, ForeignKey("buyers.id"), nullable=True)
     rbi = Column(Float, default=0.0)
     serial_start = Column(Integer, default=0)
+    # One past the highest carton number this invoice has ever allotted. A
+    # line added later starts here, so numbers once given to a line that was
+    # removed are never handed to another item (calc.lock_serials). NULL on an
+    # invoice from before the column — read as one past its last line.
+    serial_next = Column(Integer, nullable=True)
     vehicles = Column(JSON, default=dict)            # { supplierId: {vehicleNo,transportId,transportName,source,dest} }
     ship = Column(JSON, default=dict)                # BL / container / shipping fields
     step_skip = Column(JSON, default=dict)           # { vehicle, container, ship }
@@ -278,8 +283,11 @@ class Invoice(Base):
     # Read back in the order the cartons were numbered in — `position` is set
     # when the invoice is written (see routers/invoices.py), so the serial
     # ranges every screen and document derives from it can never reshuffle.
+    # Loaded for every invoice of a query in one extra SELECT ("selectin"),
+    # not one SELECT per invoice the first time each is touched — every list,
+    # report and ledger walks all the lines, and each query is a round trip.
     lines = relationship("InvoiceLine", back_populates="invoice", cascade="all, delete-orphan",
-                         order_by="InvoiceLine.position")
+                         order_by="InvoiceLine.position", lazy="selectin")
 
 
 class InvoiceLine(Base):
@@ -309,6 +317,12 @@ class InvoiceLine(Base):
     # sequence (calc.item_rank); invoices that predate the column keep the
     # order they were always read in (migrate.py backfills it).
     position = Column(Integer, nullable=True)
+    # The first carton number this line was allotted — fixed once allotted, as
+    # customs have it from then on. Removing another line leaves a gap rather
+    # than renumbering the rest (calc.lock_serials); the range is
+    # serial_from … serial_from + boxes − 1. NULL only on a line written before
+    # the column existed, which migrate.py fills in from the old running count.
+    serial_from = Column(Integer, nullable=True)
     invoice = relationship("Invoice", back_populates="lines")
 
 

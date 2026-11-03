@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import {
   Card, CardHead, Btn, Field, Input, Select, Pill, Mono, Empty, Note, SearchInput, Info,
-  Spinner, DownloadPair,
+  Spinner, ErrorState, DownloadPair,
 } from "../../components/ui/index.jsx";
 import {
   useInvoices, useItems, useBuyers, useSuppliers, useTransports, usePoLines,
@@ -120,14 +120,27 @@ export default function DocumentsPage({ group }) {
 
   const invq = useInvoices();
   const poq = usePoList();
-  const items = useItems().data || [];
-  const buyers = useBuyers().data || [];
-  const suppliers = useSuppliers().data || [];
-  const transports = useTransports().data || [];
-  const poLines = usePoLines().data || [];
+  const itemsQ = useItems();
+  const buyersQ = useBuyers();
+  const suppliersQ = useSuppliers();
+  const transportsQ = useTransports();
+  const poLinesQ = usePoLines();
+  const optionsQ = useOptions();
+  const items = itemsQ.data || [];
+  const buyers = buyersQ.data || [];
+  const suppliers = suppliersQ.data || [];
+  const transports = transportsQ.data || [];
+  const poLines = poLinesQ.data || [];
   const invoices = invq.data || [];
   const pos = poq.data || [];
-  const sequence = useOptions().data?.item_sequence;
+  const sequence = optionsQ.data?.item_sequence;
+  const itemGroups = optionsQ.data?.item_groups;
+  /* A paper built before everything it reads has arrived would print with
+     blanks where the items, the buyer or the sequence belong — so the page
+     waits for all of it, and says which way it failed if one did not come. */
+  const sources = [invq, poq, itemsQ, buyersQ, suppliersQ, transportsQ, poLinesQ, optionsQ];
+  const sourceFailed = sources.find((x) => x.isError && x.data === undefined);
+  const sourcesLoading = sources.some((x) => x.data === undefined && !x.isError);
   const hidden = useHiddenFields();
   const colRules = useDocColumnRules();
   /* One supplier's goods, or all of them in the item sequence. Every paper
@@ -150,8 +163,11 @@ export default function DocumentsPage({ group }) {
   // ⌘K can deep-link straight to a document.
   useEffect(() => {
     const doc = params.get("doc");
-    if (doc) { setOpen(doc); setQ(""); setParams({}, { replace: true }); }
-  }, [params, setParams]);
+    if (!doc) return;
+    if (DOC_META[doc]) { setOpen(doc); setQ(""); }
+    else toast(`There is no document ${doc} — pick one from the list.`, { tone: "error" });
+    setParams({}, { replace: true });
+  }, [params, setParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* The full library opens on an invoice-stage document. If there is no
      invoice yet but orders have been placed, land on the PO papers instead —
@@ -189,20 +205,23 @@ export default function DocumentsPage({ group }) {
   const invCtx = useMemo(
     () => (inv ? docCtx({
       invoice: inv, items, buyers, suppliers, poLines, transports, invoices,
-      supplierId: sup, sequence, hidden, colRules,
+      supplierId: sup, sequence, groups: itemGroups, hidden, colRules,
     }) : null),
-    [inv, items, buyers, suppliers, poLines, transports, invoices, sup, sequence, hidden, colRules],
+    [inv, items, buyers, suppliers, poLines, transports, invoices, sup, sequence, itemGroups, hidden, colRules],
   );
   const orderCtx = useMemo(
     () => (po ? poCtx({
       po: po.po, items, buyers, suppliers, poLines, transports,
-      supplierId: sup, sequence, hidden, colRules,
+      supplierId: sup, sequence, groups: itemGroups, hidden, colRules,
     }) : null),
-    [po, items, buyers, suppliers, poLines, transports, sup, sequence, hidden, colRules],
+    [po, items, buyers, suppliers, poLines, transports, sup, sequence, itemGroups, hidden, colRules],
   );
   const ctx = poMode ? orderCtx : invCtx;
 
-  if (invq.isLoading || poq.isLoading) return <Spinner label="Loading…" />;
+  if (sourceFailed) {
+    return <ErrorState error={sourceFailed.error} onRetry={() => sources.forEach((x) => x.isError && x.refetch())} />;
+  }
+  if (sourcesLoading) return <Spinner label="Loading the documents…" />;
 
   if (!ctx) {
     const needPo = poMode;
@@ -277,7 +296,7 @@ export default function DocumentsPage({ group }) {
           )}
           <Field label="Supplier" style={{ width: 280, maxWidth: "100%" }}>
             <Select value={sup} onChange={(e) => setSupId(e.target.value)} aria-label="Supplier">
-              <option value="">All suppliers · item sequence</option>
+              <option value="">All suppliers · in supplier sequence</option>
               {supsHere.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
             </Select>
           </Field>
@@ -412,7 +431,7 @@ export default function DocumentsPage({ group }) {
             <div className="row" style={{ marginTop: 12, gap: 7, fontSize: 11.5, color: "var(--teal-ink)" }}>
               <Check size={14} /> Live preview of the download — every figure pulled from{" "}
               {poMode ? `purchase order ${po.po}` : `invoice ${inv.invoice_no}`}
-              {sup ? `, ${supCodeOf(sup)}'s items only` : ", every supplier in the item sequence"}. The Excel keeps its formulas.
+              {sup ? `, ${supCodeOf(sup)}'s items only` : ", every supplier in the supplier sequence"}. The Excel keeps its formulas.
             </div>
           </div>
         </Card>

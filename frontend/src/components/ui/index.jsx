@@ -223,17 +223,59 @@ export const Stat = ({ icon: Icon, value, label, sub, tone }) => (
 );
 
 export const Spinner = ({ label = "Loading…" }) => (
-  <div className="empty">
+  <div className="empty" role="status" aria-live="polite">
     <div className="ei"><Loader2 size={21} className="spin" /></div>
     <p style={{ color: "var(--muted)" }}>{label}</p>
   </div>
 );
 
-export const ErrorState = ({ error, onRetry }) => (
-  <Empty icon={AlertTriangle} title="Could not load data" action={onRetry && <Btn size="sm" onClick={onRetry}>Retry</Btn>}>
-    {String(error?.message || error || "Request failed")}. Is the API running?
-  </Empty>
-);
+/* What went wrong, said the way it went wrong: no connection, a server that
+   did not answer, a record that is not there, a right the account lacks, or
+   the server's own message — rather than one "could not load" for all five. */
+export function errorText(error) {
+  const status = error?.status;
+  const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+  const msg = String(error?.message || error || "").replace(/\.$/, "");
+  if (offline) return { title: "You are offline", text: "Check the internet connection, then retry." };
+  if (!status) return { title: "Could not reach the server", text: "The request got no answer — the server may be starting up, or the connection dropped. Retry in a moment." };
+  if (status === 404) return { title: "Not found", text: msg || "It may have been deleted or renamed." };
+  if (status === 403) return { title: "Not allowed", text: msg || "Your account does not have access to this. Ask the admin under Setup → Users." };
+  if (status >= 500) return { title: "The server ran into a problem", text: msg || "Retry in a moment; if it keeps happening, tell the admin." };
+  return { title: "Could not load this", text: msg || "The request was refused." };
+}
+
+export const ErrorState = ({ error, onRetry, title }) => {
+  const e = errorText(error);
+  return (
+    <Empty icon={AlertTriangle} title={title || e.title} action={onRetry && <Btn size="sm" onClick={() => onRetry()}>Retry</Btn>}>
+      {e.text}
+    </Empty>
+  );
+};
+
+/* A list that comes from the server, in the one order of states every list
+   in the app goes through: loading until the first answer arrives — never
+   "nothing matches" before the search has even run — then the error if it
+   failed, then `empty` only once an answer has actually come back empty.
+   While a changed filter or search is fetching, the previous answer stays on
+   screen, dimmed, under a "Searching…" line, instead of flashing empty.
+   `count` is how many rows the answer gave (after any filtering of its own);
+   `pending` is true while a typed search has not been sent yet (debounced). */
+export function ResultState({ query, count, pending = false, loading = "Loading…", busy = "Searching…", empty, children }) {
+  if (query.isError && query.data === undefined) return <ErrorState error={query.error} onRetry={query.refetch} />;
+  if (query.data === undefined) return <Spinner label={loading} />;
+  if (query.isPlaceholderData || pending) {
+    if (!count) return <Spinner label={busy} />;
+    return (
+      <div className="results-stale" aria-busy="true">
+        <div className="results-busy" role="status"><Loader2 size={13} className="spin" /> {busy}</div>
+        {children}
+      </div>
+    );
+  }
+  if (!count) return empty;
+  return children;
+}
 
 /* Modal — a centred panel at ~75% width with enlarged type (see .modal in CSS).
    `size="sm"` narrows it to a column: right for a question with a short answer,
@@ -327,7 +369,15 @@ export const FootStats = ({ items, empty }) => (
    app is a table. Two optional column flags steer that and change nothing on a
    desktop:
      primary     — this column is the card's heading (default: the first one)
-     hideOnMobile — leave this column out of the card entirely */
+     hideOnMobile — leave this column out of the card entirely
+
+   section(row, index) → a heading, or null: a full-width band above that row,
+   the way a list breaks into blocks (Oswin, then Oswin · PMF …). `index` counts
+   the whole list, not the page.
+
+   An empty table says why: `loading` (the rows are still on their way),
+   `error` (with `onRetry`), or `empty` — never "nothing to show" while the
+   answer has not come back yet. */
 const FREEZE_W = 120;
 
 const SERIAL_COL = {
@@ -343,6 +393,7 @@ const sizeLabel = (n) => (n ? String(n) : "All");
 export function DataTable({
   columns, rows, rowKey, freeze = 0, serial = false, onRowClick, footer, maxHeight,
   paginate = false, pageSize: initialPageSize = 25,
+  section, loading = false, error = null, onRetry, empty = "Nothing to show yet.",
 }) {
   const mobile = useIsMobile();
   const [size, setSize] = useState(initialPageSize);
@@ -443,6 +494,17 @@ export function DataTable({
     return out.length ? { title, rows: out } : null;
   }, [mobile, foot, cols]);
 
+  const headOf = (r, ri) => (section ? section(r, first + ri) : null);
+  const emptyNote = loading
+    ? <span className="row" style={{ justifyContent: "center", gap: 8 }}><Loader2 size={15} className="spin" /> Loading…</span>
+    : error
+      ? <span className="stack-sm" style={{ alignItems: "center" }}>
+        <span style={{ color: "var(--amber-ink)", fontWeight: 600 }}>{errorText(error).title}</span>
+        <span>{errorText(error).text}</span>
+        {onRetry && <Btn size="sm" variant="ghost" onClick={() => onRetry()}>Retry</Btn>}
+      </span>
+      : empty;
+
   /* Phones get the same rows as cards. The serial number becomes the card's
      corner index rather than a column, and a right-aligned column keeps its
      right alignment as the value side of the pair. */
@@ -454,7 +516,9 @@ export function DataTable({
       <>
         <div className="dt-cards">
           {shown.map((r, ri) => (
-            <div key={rowKey ? rowKey(r, ri) : ri}
+            <Fragment key={rowKey ? rowKey(r, ri) : ri}>
+            {headOf(r, ri) && <div className="dt-sec-card">{headOf(r, ri)}</div>}
+            <div
               className={`dt-card${onRowClick ? " click" : ""}`}
               onClick={onRowClick ? () => onRowClick(r) : undefined}>
               <div className="dt-card-head">
@@ -474,8 +538,9 @@ export function DataTable({
                 })}
               </dl>
             </div>
+            </Fragment>
           ))}
-          {!rows.length && <div className="dt-empty">Nothing to show yet.</div>}
+          {!rows.length && <div className="dt-empty">{emptyNote}</div>}
           {mobileTotals && rows.length > 0 && (
             <div className="dt-card dt-card-total">
               <div className="dt-card-head"><span className="dt-card-title">{mobileTotals.title}</span></div>
@@ -499,11 +564,16 @@ export function DataTable({
         <thead><tr>{cols.map((c, i) => <th key={c.key} className={cls(i)} style={frz(i)}>{c.label}</th>)}</tr></thead>
         <tbody>
           {shown.map((r, ri) => (
-            <tr key={rowKey ? rowKey(r, ri) : ri} className={onRowClick ? "click" : ""} onClick={onRowClick ? () => onRowClick(r) : undefined}>
-              {cols.map((c, i) => <td key={c.key} className={cls(i)} style={frz(i)}>{c.render ? c.render(r, ri) : r[c.key]}</td>)}
-            </tr>
+            <Fragment key={rowKey ? rowKey(r, ri) : ri}>
+              {headOf(r, ri) && (
+                <tr className="dt-sec"><td colSpan={cols.length}><span className="dt-sec-label">{headOf(r, ri)}</span></td></tr>
+              )}
+              <tr className={onRowClick ? "click" : ""} onClick={onRowClick ? () => onRowClick(r) : undefined}>
+                {cols.map((c, i) => <td key={c.key} className={cls(i)} style={frz(i)}>{c.render ? c.render(r, ri) : r[c.key]}</td>)}
+              </tr>
+            </Fragment>
           ))}
-          {!rows.length && <tr><td colSpan={cols.length} style={{ textAlign: "center", padding: "34px 12px", color: "var(--faint)" }}>Nothing to show yet.</td></tr>}
+          {!rows.length && <tr><td colSpan={cols.length} style={{ textAlign: "center", padding: "34px 12px", color: "var(--faint)" }}>{emptyNote}</td></tr>}
         </tbody>
         {foot && rows.length > 0 && <tfoot><tr>{foot.map((f, i) => <td key={i} colSpan={f.span} className={f.align === "r" ? "r" : ""}>{f.v}</td>)}</tr></tfoot>}
       </table>

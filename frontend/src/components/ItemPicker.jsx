@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Plus, Search, Check } from "lucide-react";
-import { Card, Btn, Select, Pill, Mono, Empty, SearchInput, NumberInput } from "./ui/index.jsx";
+import { Card, Btn, Select, Pill, Mono, Empty, SearchInput, NumberInput, ResultState } from "./ui/index.jsx";
 import { useGroupedItems, useSuppliers } from "../api/hooks.js";
 import { useDebounced } from "../lib/useDebounced.js";
 import { boxesExact } from "../lib/format.js";
@@ -25,7 +25,9 @@ export default function ItemPicker({
   const [qtys, setQtys] = useState({});          // item id → typed quantity
 
   const suppliers = useSuppliers().data || [];
-  const groups = useGroupedItems({ q: useDebounced(q), supplier_id: sup }).data || [];
+  const dq = useDebounced(q);
+  const found = useGroupedItems({ q: dq, supplier_id: sup });
+  const groups = found.data || [];
   /* The list above is filtered; what has been typed is resolved against the
      unfiltered master, so a quantity entered under one supplier survives
      switching to another. React Query caches both. */
@@ -65,6 +67,16 @@ export default function ItemPicker({
       </div>
 
       <div style={{ maxHeight, overflowY: "auto", borderTop: "1px solid var(--border)" }}>
+        {/* Loading, then the list — "no item matches" only once the search
+            has actually come back empty. */}
+        <ResultState query={found} count={groups.length} pending={dq !== q} loading="Loading items…"
+          empty={(
+            <Empty icon={Search} title="No item matches">
+              {sup
+                ? <>Nothing from {supCode(sup)}{q ? <> matches “{q}”</> : " is in the item master yet"}. Try another supplier, or clear the search.</>
+                : <>Try the GD code, the item code, the supplier, or part of the description.</>}
+            </Empty>
+          )}>
         {groups.map((g, i) => (
           <div key={g.key} style={{ padding: "11px 14px", borderTop: i ? "1px solid var(--border)" : "none" }}>
             <div className="row" style={{ marginBottom: 8 }}>
@@ -110,13 +122,7 @@ export default function ItemPicker({
             </div>
           </div>
         ))}
-        {!groups.length && (
-          <Empty icon={Search} title="No item matches">
-            {sup
-              ? <>Nothing from {supCode(sup)} matches. Try another supplier, or clear the search.</>
-              : <>Try the GD code, the item code, the supplier, or part of the description.</>}
-          </Empty>
-        )}
+        </ResultState>
       </div>
 
       <div className="picker-foot">

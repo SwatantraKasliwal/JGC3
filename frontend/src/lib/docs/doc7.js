@@ -1,4 +1,4 @@
-import { L, P7, bcDescription, esc, fitSheet, hsnText, hsnValue, poBannerList, poStack, sum, wbFixed } from "./common.js";
+import { L, bandOpener, P7, bcDescription, esc, fitSheet, hsnText, hsnValue, poBannerList, poStack, sum, wbFixed } from "./common.js";
 
 export function supplierPackingSheet(ctx, rows) {
   const H = (v) => ({ v, s: P7.head });
@@ -22,13 +22,12 @@ export function supplierPackingSheet(ctx, rows) {
   ];
   const heights = [undefined, 12.75, undefined];
 
-  let band = firstBand;
+  const bandAt = bandOpener(rows, firstBand);
   let first = 0;
   let last = 0;
-  rows.forEach((r) => {
-    const g = String(r.it.group || "").trim();
-    if (g && g !== band) {                       // a new size band opens
-      band = g;
+  rows.forEach((r, ri) => {
+    const g = bandAt(r, ri);
+    if (g) {                       // a new size band opens
       /* The cells either side of the label keep their column's own formatting,
          as theirs do — the band is a break in the list, not a different table. */
       out.push([{ v: "", s: P7.sr }, { v: "", s: P7.po },
@@ -96,11 +95,11 @@ export function supplierPackingSheet(ctx, rows) {
 export const B_7 = (ctx) => {
   const rows = L(ctx);
   const groups = [...new Set(rows.map((r) => String(r.it.group || "").trim()).filter(Boolean))];
-  let band = groups.length ? groups[0] : "";
-  const body = rows.map((r) => {
+  const bandAt = bandOpener(rows, groups.length ? groups[0] : "");
+  const body = rows.map((r, ri) => {
     const it = r.it;
-    const g = String(it.group || "").trim();
-    const open = g && g !== band ? (band = g, `<tr class="band"><td></td><td></td>`
+    const g = bandAt(r, ri);
+    const open = g ? (`<tr class="band"><td></td><td></td>`
       + `<td class="gd" colspan="3">${esc(g)}</td>${"<td></td>".repeat(13)}</tr>`) : "";
     return `${open}<tr>
       <td class="c">${esc(r.range)}</td>

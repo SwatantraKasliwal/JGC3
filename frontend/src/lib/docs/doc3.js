@@ -1,4 +1,4 @@
-import { WB, attr, bcDescription, esc, fitSheet, hsnText, hsnValue, orderAgg, poHeaderList, sum, upDiv, wbFixed } from "./common.js";
+import { blockRow, blockSheetRow, WB, attr, bcDescription, esc, fitSheet, hsnText, hsnValue, orderAgg, poHeaderList, sum, upDiv, wbFixed } from "./common.js";
 
 /* Doc 3 · Packing — the same treatment against 3-Packing.xlsx: fifteen
    columns under a two-line header with PACKING split into UNIT / BOX and
@@ -26,7 +26,10 @@ export function packingSheet(ctx, rows) {
   const heights = [undefined, 19.5, 19.5];
 
   const first = out.length + 1;
+  const bandMerges = [];
   rows.forEach((r) => {
+    // A block of the range (Setup → Item groups) opens under its own heading.
+    if (r.blockHead) { out.push(blockSheetRow(r.blockHead, 15, out.length + 1, bandMerges)); heights.push(15); }
     const line = out.length + 1;
     const it = r.it;
     const hsn = hsnValue(it);
@@ -64,7 +67,7 @@ export function packingSheet(ctx, rows) {
     name: "Packing",
     rows: out,
     heights,
-    merges: ["A1:O1", "F2:G2", "K2:L2", "N2:N3", "O2:O3"],
+    merges: ["A1:O1", "F2:G2", "K2:L2", "N2:N3", "O2:O3", ...bandMerges],
     widths: [13.42578125, 11.28515625, 13.42578125, 5.140625, 8.5703125, 6, 6.28515625,
       32.7109375, 14.140625, 14.140625, 7, 7.28515625, 8, 9.140625, 9.140625],
     defaultColWidth: 9.140625,
@@ -83,7 +86,7 @@ export const B_3 = (ctx) => {
   const boxFml = attr(upDiv("{qty}", "{packbox}"));
   const body = rows.map((r) => {
     const it = r.it;
-    return `<tr>
+    return `${blockRow(r, 15)}<tr>
       <td class="gd">${esc(it.code)}</td>
       <td class="gd">${esc(it.gd)}</td>
       <td class="gdc">${esc(it.gl)}</td>

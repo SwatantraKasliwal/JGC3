@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Globe, Truck, Download, Pencil, FileText, AlertTriangle, CheckCircle2 } from "lucide-react";
-import { Modal, Btn, Seg, Pill, Mono, DataTable, Note } from "../../components/ui/index.jsx";
+import { Modal, Btn, Seg, Pill, Mono, DataTable, Note, Spinner, ErrorState } from "../../components/ui/index.jsx";
 import { useItems, useBuyers, useSuppliers, usePoLines, useInvoices, useOptions } from "../../api/hooks.js";
 import { useHiddenFields, useDocColumnRules } from "../../lib/columnPrefs.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
@@ -9,19 +9,24 @@ import { hidePriceCols } from "../../lib/priceCols.js";
 import { docCtx } from "../../lib/docCtx.js";
 import { buildDocument, DOC_META } from "../../lib/docs.js";
 import { INV_STATUS_TONE } from "../../lib/constants.js";
+import { serialBase, savedFroms } from "../../lib/serials.js";
+import { sortBySequence, blockOf, blockHeads } from "../../lib/sequence.js";
 
 const shipComplete = (s) => !!(s && s.blNo && s.vessel && s.container && s.pod);
 
 /* One invoice, two audiences: the buyer sees USD/FOB, the supplier sees
    ₹/cost. Same rows, same source — just a different lens. */
 export default function InvoiceModal({ inv, onEditShip, onClose }) {
-  const items = useItems().data || [];
+  const itemsQ = useItems();
+  const items = itemsQ.data || [];
   const buyers = useBuyers().data || [];
   const suppliers = useSuppliers().data || [];
   const poLines = usePoLines().data || [];
   const invoices = useInvoices().data || [];
   const toast = useToast();
-  const sequence = useOptions().data?.item_sequence;
+  const opts = useOptions().data;
+  const sequence = opts?.item_sequence;
+  const itemGroups = opts?.item_groups;
   const hidden = useHiddenFields();
   const colRules = useDocColumnRules();
   const [tab, setTab] = useState("buyer");
@@ -31,11 +36,13 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
   const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
   const done = shipComplete(inv.ship);
 
-  /* Serial (carton) numbers — the invoice starts at serial_start and each
-     line consumes its boxes in order, so ranges never overlap. */
+  /* Serial (carton) numbers — each line's own, allotted when it joined the
+     invoice and kept since (lib/serials.js), so a line removed later leaves a
+     gap rather than renumbering the rest. Listed in the item sequence, blocks
+     and all, as the documents print them. */
   const lines = useMemo(() => {
-    let sr = Number(inv.serial_start) || 0;
-    return (inv.lines || []).map((l) => {
+    const froms = savedFroms(inv.lines, serialBase(inv.serial_start, inv.ship));
+    const out = (inv.lines || []).map((l, li) => {
       const it = byId[l.item_id] || {};
       const boxes = Number(l.boxes) || 0;
       const pieces = boxes * (it.packing || 0);
@@ -45,7 +52,7 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
       const fobMode = l.fob_mode || it.fob_mode || "100";
       const supRate = l.unit_value == null ? (it.unit_value || 0) : Number(l.unit_value);
       const buyerRate = fobMode === "100" ? fob100 / 100 : fob100;
-      const from = sr; const to = sr + boxes - 1; sr += boxes;
+      const from = froms[li]; const to = from + boxes - 1;
       return {
         it, supplierId: l.supplier_id, boxes, pieces,
         volume: boxes * (it.volume || 0), netWt: boxes * (it.net_per_box || 0),
@@ -54,14 +61,18 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
         range: boxes ? `${from}–${to}` : "—",
       };
     });
-  }, [inv, byId]);
+    const opt = { suppliers, sequence, groups: itemGroups, getItem: (x) => x.it, supplierOf: (x) => x.it.supplier_id || x.supplierId };
+    const sorted = sortBySequence(out, opt);
+    const heads = blockHeads(sorted, blockOf(opt));
+    return sorted.map((x, i) => ({ ...x, head: heads[i] }));
+  }, [inv, byId, suppliers, sequence, itemGroups]);
 
   const t = lines.reduce((a, x) => ({
     boxes: a.boxes + x.boxes, pieces: a.pieces + x.pieces, volume: a.volume + x.volume,
     buyerAmt: a.buyerAmt + x.buyerAmt, supAmt: a.supAmt + x.supAmt,
   }), { boxes: 0, pieces: 0, volume: 0, buyerAmt: 0, supAmt: 0 });
 
-  const ctx = () => docCtx({ invoice: inv, items, buyers, suppliers, poLines, invoices, sequence, hidden, colRules });
+  const ctx = () => docCtx({ invoice: inv, items, buyers, suppliers, poLines, invoices, sequence, groups: itemGroups, hidden, colRules });
   const grab = (no) => { buildDocument(no, ctx()); toast(`Document ${no} · ${DOC_META[no]} downloaded`); };
 
   /* Rates and amounts are held off screen like everywhere else; the invoice
@@ -88,7 +99,9 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
     { key: "rate", label: "Rate ₹/pc", align: "r" },
     { key: "amt", label: "Amount ₹", align: "r", strong: true },
   ]);
+  // Supplier by supplier, each in the item sequence — the sort is stable.
   const supRows = [...lines].sort((a, b) => supCode(a.supplierId).localeCompare(supCode(b.supplierId)));
+  const supHeads = blockHeads(supRows, blockOf({ suppliers, groups: itemGroups, getItem: (x) => x.it, supplierOf: (x) => x.it.supplier_id || x.supplierId }));
 
   return (
     <Modal title={`Invoice ${inv.invoice_no}`} icon={FileText} onClose={onClose}
@@ -121,11 +134,15 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
           : <Note tone="amber" icon={AlertTriangle}>The <b>customs invoice (18)</b> needs the BL number, vessel, container and port of discharge — use <b>Edit shipment details</b> below.</Note>}
       </div>
 
-      {tab === "buyer" ? (
-        <DataTable serial columns={buyerCols} rows={lines} rowKey={(x, i) => i} freeze={5}
+      {/* The lines name their items by id — nothing to show until the master
+          they are read against has arrived. */}
+      {itemsQ.data === undefined ? (
+        itemsQ.isError ? <ErrorState error={itemsQ.error} onRetry={itemsQ.refetch} /> : <Spinner label="Loading the invoice…" />
+      ) : tab === "buyer" ? (
+        <DataTable serial columns={buyerCols} rows={lines} rowKey={(x, i) => i} freeze={5} section={(x) => x.head}
           footer={[{ v: "Total", span: 4 }, { v: t.boxes, align: "r" }, { v: t.pieces.toLocaleString("en-IN"), align: "r" }, { v: num(t.volume, 3), align: "r" }]} />
       ) : (
-        <DataTable serial columns={supCols} rows={supRows} rowKey={(x, i) => i} freeze={5}
+        <DataTable serial columns={supCols} rows={supRows} rowKey={(x, i) => i} freeze={5} section={(x, i) => supHeads[i]}
           footer={[{ v: "Total", span: 4 }, { v: t.boxes, align: "r" }, { v: t.pieces.toLocaleString("en-IN"), align: "r" }, { v: num(t.volume, 3), align: "r" }]} />
       )}
     </Modal>

@@ -1,4 +1,4 @@
-import { WB, attr, bcDescription, ddmm, esc, exRate, fitSheet, orderAgg, poHeaderList, sum, upDiv, wbRupee } from "./common.js";
+import { blockRow, blockSheetRow, WB, attr, bcDescription, ddmm, esc, exRate, fitSheet, orderAgg, poHeaderList, sum, upDiv, wbRupee } from "./common.js";
 
 /* Doc 5 · Sales — against 5-Sales.xlsx. The purchase sheet's twin, priced the
    other way round: FOB per hundred pieces in dollars, then the RBI reference in
@@ -25,7 +25,10 @@ export function salesSheet(ctx, rows) {
   const heights = [undefined, 19.5, 19.5];
 
   const first = out.length + 1;
+  const bandMerges = [];
   rows.forEach((r) => {
+    // A block of the range (Setup → Item groups) opens under its own heading.
+    if (r.blockHead) { out.push(blockSheetRow(r.blockHead, 15, out.length + 1, bandMerges)); heights.push(15); }
     const line = out.length + 1;
     const it = r.it;
     out.push([
@@ -62,7 +65,7 @@ export function salesSheet(ctx, rows) {
     name: "Sales",
     rows: out,
     heights,
-    merges: ["A1:K1", "L1:M1", "N1:O1", "F2:G2", "J2:K2", "L2:M2", "N2:O2"],
+    merges: ["A1:K1", "L1:M1", "N1:O1", "F2:G2", "J2:K2", "L2:M2", "N2:O2", ...bandMerges],
     /* Their money columns are the default 9.14 — wide enough only because the
        rate cell in their copy is empty. Filled in, the rupee columns print
        ###, so the three that carry a total are given room. */
@@ -87,7 +90,7 @@ export const B_5 = (ctx) => {
   const rs2 = (n) => `Rs. ${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const body = rows.map((r) => {
     const it = r.it;
-    return `<tr>
+    return `${blockRow(r, 15)}<tr>
       <td class="gd">${esc(it.code)}</td>
       <td class="gd">${esc(it.gd)}</td>
       <td class="gdc">${esc(it.gl)}</td>
