@@ -1,4 +1,4 @@
-import { WB, attr, bcDescription, ddmmyy, esc, fitSheet, hsnText, hsnValue, orderAgg, poHeaderList, sum, upDiv, wbRupee } from "./common.js";
+import { blockRow, blockSheetRow, WB, attr, bcDescription, ddmmyy, esc, fitSheet, hsnText, hsnValue, orderAgg, poHeaderList, sum, upDiv, wbRupee } from "./common.js";
 
 /* Doc 4 · Purchase — against 4-Purchase.xlsx. The packing sheet without its
    GL code and volumes, and with what we pay the factory on the end: unit price
@@ -21,7 +21,10 @@ export function purchaseSheet(ctx, rows) {
   const heights = [undefined, 19.5, 19.5];
 
   const first = out.length + 1;
+  const bandMerges = [];
   rows.forEach((r) => {
+    // A block of the range (Setup → Item groups) opens under its own heading.
+    if (r.blockHead) { out.push(blockSheetRow(r.blockHead, 13, out.length + 1, bandMerges)); heights.push(15); }
     const line = out.length + 1;
     const it = r.it;
     const hsn = hsnValue(it);
@@ -56,7 +59,7 @@ export function purchaseSheet(ctx, rows) {
     name: "Purchase",
     rows: out,
     heights,
-    merges: ["A1:M1", "E2:F2", "J2:K2", "L2:M2"],
+    merges: ["A1:M1", "E2:F2", "J2:K2", "L2:M2", ...bandMerges],
     widths: [13.42578125, 11.28515625, 5.140625, 8.5703125, 6, 6.28515625, 32.7109375,
       14.140625, 14.140625, 7, 7.28515625, 9.140625, 11.7109375],
     defaultColWidth: 9.140625,
@@ -75,7 +78,7 @@ export const B_4 = (ctx) => {
   const boxFml = attr(upDiv("{qty}", "{packbox}"));
   const body = rows.map((r) => {
     const it = r.it;
-    return `<tr>
+    return `${blockRow(r, 13)}<tr>
       <td class="gd">${esc(it.code)}</td>
       <td class="gd">${esc(it.gd)}</td>
       <td class="bh">${esc(it.size)}</td>

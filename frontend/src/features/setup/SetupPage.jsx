@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Layers, Globe, Truck, Route, Users as UsersIcon, Plus, Trash2, AlertTriangle, SlidersHorizontal, Columns3 } from "lucide-react";
 import {
-  Card, CardHead, Btn, Seg, Field, Input, Select, Pill, Mono, EditBtn, Empty, Note, Step,
+  Card, CardHead, Btn, Seg, Field, Input, Select, Pill, Mono, EditBtn, Empty, Note, Step, Spinner, ErrorState,
 } from "../../components/ui/index.jsx";
 import { useAuth } from "../../auth/AuthProvider.jsx";
 import { useIsMobile } from "../../lib/useIsMobile.js";
@@ -158,9 +158,17 @@ export default function SetupPage() {
   const [failed, setFailed] = useState("");
   const mobile = useIsMobile();
 
-  const suppliers = useSuppliers().data || [];
-  const buyers = useBuyers().data || [];
-  const transports = useTransports().data || [];
+  const suppliersQ = useSuppliers();
+  const buyersQ = useBuyers();
+  const transportsQ = useTransports();
+  const suppliers = suppliersQ.data || [];
+  const buyers = buyersQ.data || [];
+  const transports = transportsQ.data || [];
+  /* Each list says it is loading (or could not load) before it ever says
+     "nothing added yet". */
+  const listState = (q, label) => (q.data === undefined
+    ? (q.isError ? <ErrorState error={q.error} onRetry={q.refetch} /> : <Spinner label={label} />)
+    : null);
   const groups = useItemGroups().data || [];
   const users = useUsers(isAdmin).data || [];
   const itemCount = groups.reduce((s, g) => s + g.count, 0);
@@ -245,7 +253,7 @@ export default function SetupPage() {
               </div>
             </div>
           </>}>
-          {buyers.length ? buyers.map((b, i) => (
+          {listState(buyersQ, "Loading buyers…") || (buyers.length ? buyers.map((b, i) => (
             <div key={b.id} style={{ padding: "14px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <div className="row" style={{ gap: 10, alignItems: "center" }}>
@@ -269,7 +277,7 @@ export default function SetupPage() {
                 ))}
               </div>
             </div>
-          )) : <Empty icon={Globe} title="No buyers yet">Add your first buyer with the form beside this list.</Empty>}
+          )) : <Empty icon={Globe} title="No buyers yet">Add your first buyer with the form beside this list.</Empty>)}
         </PartyPanel>
       )}
 
@@ -312,7 +320,7 @@ export default function SetupPage() {
               </div>
             </div>
           </>}>
-          {suppliers.length ? suppliers.map((s, i) => (
+          {listState(suppliersQ, "Loading suppliers…") || (suppliers.length ? suppliers.map((s, i) => (
             <div key={s.id} className="row" style={{ padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none", justifyContent: "space-between" }}>
               <div style={{ minWidth: 0 }}>
                 <div className="row" style={{ gap: 7 }}>
@@ -331,7 +339,7 @@ export default function SetupPage() {
                   onClick={() => delSupplier.mutate(s.id, { onError: (e) => setFailed(e.message), onSuccess: () => toast(`Supplier ${s.name} removed`) })}><Trash2 size={14} /></button>
               </div>
             </div>
-          )) : <Empty icon={Truck} title="No suppliers yet">Add one here, or load the master workbook under Items.</Empty>}
+          )) : <Empty icon={Truck} title="No suppliers yet">Add one here, or load the master workbook under Items.</Empty>)}
         </PartyPanel>
       )}
 
@@ -369,7 +377,7 @@ export default function SetupPage() {
               </div>
             </div>
           </>}>
-          {transports.length ? transports.map((t, i) => {
+          {listState(transportsQ, "Loading transports…") || (transports.length ? transports.map((t, i) => {
             const ids = t.supplier_ids?.length ? t.supplier_ids : (t.supplier_id ? [t.supplier_id] : []);
             return (
               <div key={t.id} className="row" style={{ padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none", justifyContent: "space-between" }}>
@@ -389,7 +397,7 @@ export default function SetupPage() {
                 </div>
               </div>
             );
-          }) : <Empty icon={Route} title="No transports yet">Add carriers and link each to the suppliers it serves.</Empty>}
+          }) : <Empty icon={Route} title="No transports yet">Add carriers and link each to the suppliers it serves.</Empty>)}
         </PartyPanel>
       )}
 

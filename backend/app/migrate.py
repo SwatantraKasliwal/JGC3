@@ -9,7 +9,9 @@ Additive only — nothing is dropped, renamed or retyped, so it is safe to run
 on every boot and safe to run twice. Anything beyond adding a column (a real
 type change, a backfill with logic) belongs in Alembic.
 """
+import json
 import logging
+import re
 
 from sqlalchemy import inspect, text
 from sqlalchemy.schema import CreateColumn
@@ -148,6 +150,60 @@ def _backfill_line_positions(conn, dialect_name: str) -> int:
     return done
 
 
+def _backfill_line_serials(conn) -> int:
+    """Store the carton numbers every existing line already prints with.
+
+    Until `serial_from` existed the numbers were counted down the lines from
+    the invoice's serial start (or the number in its shipping marks, or 2001)
+    every time they were shown. That count is written down once, here, so the
+    paperwork already issued keeps exactly the numbers it carries — and from
+    now on removing a line no longer shifts the ones after it.
+    """
+    # Read in two queries and written back one statement per invoice: the
+    # database can be an ocean away (Neon, us-east-2 — ~0.3 s a round trip),
+    # and a statement per line held the tables locked for minutes at startup.
+    pending = {r[0] for r in conn.execute(text(
+        "SELECT DISTINCT invoice_id FROM invoice_lines WHERE serial_from IS NULL"
+    ))}
+    if not pending:
+        return 0
+    heads = {r[0]: r[1:] for r in conn.execute(text("SELECT id, serial_start, ship FROM invoices"))
+             if r[0] in pending}
+    lines: dict = {}
+    for r in conn.execute(text(
+        'SELECT invoice_id, id, boxes, serial_from FROM invoice_lines '
+        'ORDER BY invoice_id, CASE WHEN "position" IS NULL THEN 1 ELSE 0 END, "position", id'
+    )):
+        if r[0] in heads:
+            lines.setdefault(r[0], []).append(r[1:])
+    done = 0
+    for inv_id, (start, ship) in heads.items():
+        if isinstance(ship, str):
+            try:
+                ship = json.loads(ship)
+            except ValueError:
+                ship = {}
+        m = re.search(r"(\d{3,})", str((ship or {}).get("marks") or ""))
+        nxt = int(start or 0) or (int(m.group(1)) if m else 2001)
+        fill = {}
+        for lid, boxes, frm in lines.get(inv_id, []):
+            if frm is None:
+                frm = fill[lid] = nxt
+            nxt = max(nxt, frm + int(boxes or 0))
+        if not fill:
+            continue
+        ids = list(fill)
+        params = {f"i{n}": lid for n, lid in enumerate(ids)}
+        params.update({f"f{n}": fill[lid] for n, lid in enumerate(ids)})
+        cases = " ".join(f"WHEN :i{n} THEN :f{n}" for n in range(len(ids)))
+        conn.execute(text(
+            f"UPDATE invoice_lines SET serial_from = CASE id {cases} END "
+            f"WHERE id IN ({', '.join(f':i{n}' for n in range(len(ids)))})"
+        ), params)
+        done += len(ids)
+    return done
+
+
 def run_migrations() -> list[str]:
     """Add every model column the database is missing. Returns what it did."""
     applied: list[str] = []
@@ -189,6 +245,10 @@ def run_migrations() -> list[str]:
             placed = _backfill_line_positions(conn, dialect.name)
             if placed:
                 applied.append(f"invoice_lines.position×{placed}")
+            # After the positions: the old running count followed them.
+            numbered = _backfill_line_serials(conn)
+            if numbered:
+                applied.append(f"invoice_lines.serial_from×{numbered}")
 
     if applied:
         log.info("schema migration added: %s", ", ".join(applied))

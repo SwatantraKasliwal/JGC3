@@ -1474,6 +1474,14 @@ textarea {
     transform: translateY(8px);
   }
 }
+.toast.toast-err {
+  background: #8a2c1c;
+  color: #fff;
+  border: 0;
+}
+.toast.toast-err .ti {
+  color: #ffd7cc;
+}
 .toast .ti {
   color: var(--amber);
   flex-shrink: 0;
@@ -3118,6 +3126,58 @@ textarea {
   font-size: 13px;
 }
 
+/* A list broken into blocks — Oswin, then Oswin · PMF … — heads each block
+   with a band across the table (or above the cards, on a phone). */
+.tbl tbody tr.dt-sec td {
+  background: var(--teal-bg);
+  color: var(--teal-ink);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+}
+.tbl .dt-sec-label {
+  position: sticky;
+  left: 12px;
+}
+.dt-sec-card {
+  margin: 6px 2px -2px;
+  color: var(--teal-ink);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+/* The same band in a hand-laid list (record packing's step 2 and the like). */
+.blk-head {
+  padding: 7px 14px;
+  background: var(--teal-bg);
+  color: var(--teal-ink);
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* A search or filter still fetching: the last answer stays, dimmed, under a
+   "Searching…" line, rather than the list flashing empty. */
+.results-stale > :not(.results-busy) {
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+.results-busy {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
 /* One account, read out field by field. */
 .ud-grid {
   display: grid;
@@ -3904,6 +3964,96 @@ textarea {
   font-size: 11.5px;
   font-weight: 750;
   flex-shrink: 0;
+}
+/* Item groups — a row per range on the card, each opening its popup. */
+.grp-row {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.grp-row:hover {
+  background: var(--surface-2);
+}
+.seq-list li + li .grp-row {
+  border-top: 1px solid var(--border);
+}
+.grp-prints {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+}
+
+/* …and in the popup, its blocks in print order. */
+.grp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.grp-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+}
+.grp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.grp-head .icon-btn:disabled,
+.grp-chip .icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.grp-name {
+  flex: 1;
+  min-width: 0;
+  max-width: 320px;
+}
+.grp-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.grp-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.grp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 99px;
+  background: var(--teal-bg);
+  color: var(--teal-ink);
+  font-size: 12.5px;
+}
+.grp-chip.ro {
+  background: var(--surface-3);
+  color: var(--ink-2);
+  padding-right: 8px;
+}
+.grp-n {
+  font-size: 10.5px;
+  font-weight: 600;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+.grp-chip .icon-btn {
+  width: 22px;
+  height: 22px;
 }
 .bank-grid {
   display: grid;

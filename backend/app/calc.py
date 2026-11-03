@@ -89,27 +89,83 @@ def bore_mm(item) -> float:
     return float(g.group(1)) if g else 1e9
 
 
-def item_rank(item, supplier_code: str = "", sequence=None) -> tuple:
-    """Sort key putting an item where the sequence says it goes."""
+# ---------------- Item groups inside a range ----------------
+# A range can be split into blocks that print as tables of their own: Oswin's
+# M/F threaded pipes (PMF…) under the rest of Oswin, for one. An item's
+# category is the letters its GD code starts with (PE, PEL, PFH, PMF, PP …);
+# Setup → Additional settings → Item groups puts categories into named groups
+# and orders them. Whatever no group names falls into the range's "rest"
+# block, which keeps the range's own order (Oswin by bore). Mirrored in
+# frontend/src/lib/sequence.js — keep the two in step.
+#
+# { range: [ {id, name, rest?, cats: [..], sort: "listed" | "natural"} ] }
+DEFAULT_GROUPS = {
+    "Oswin": [
+        {"id": "rest", "name": "", "rest": True, "cats": [], "sort": "natural"},
+        {"id": "pmf", "name": "PMF", "cats": ["PMF"], "sort": "listed"},
+    ],
+}
+
+
+def item_category(item) -> str:
+    """The letters a GD code (or, without one, the item code) starts with."""
+    raw = str(getattr(item, "gd", "") or "").strip() or str(getattr(item, "code", "") or "").strip()
+    m = re.match(r"[A-Za-z]+", raw)
+    return m.group(0).upper() if m else ""
+
+
+def range_blocks(range_name: str, groups=None) -> list:
+    """The blocks a range is listed in, the rest block always among them."""
+    found = None
+    for k, v in (DEFAULT_GROUPS if groups is None else groups).items():
+        if str(k).lower() == str(range_name or "").lower():
+            found = v
+            break
+    out = [dict(g) for g in (found or [])]
+    if not any(g.get("rest") for g in out):
+        out.insert(0, {"id": "rest", "name": "", "rest": True, "cats": [], "sort": "natural"})
+    return out
+
+
+def item_block(item, supplier_code: str = "", groups=None) -> dict:
+    """Which block of its range an item sits in: {range, at, cat_at, id, name, rest}."""
+    rng = range_key(item, supplier_code)
+    blocks = range_blocks(rng, groups)
+    cat = item_category(item)
+    at = next((i for i, g in enumerate(blocks)
+               if not g.get("rest") and cat and cat in [str(c).upper() for c in g.get("cats") or []]), None)
+    if at is None:
+        at = next(i for i, g in enumerate(blocks) if g.get("rest"))
+    g = blocks[at]
+    cats = [str(c).upper() for c in g.get("cats") or []]
+    listed = not g.get("rest") and g.get("sort", "listed") == "listed"
+    return {"range": rng, "at": at, "cat_at": cats.index(cat) if listed and cat in cats else 0,
+            "id": g.get("id") or str(at), "name": g.get("name") or "", "rest": bool(g.get("rest"))}
+
+
+def item_rank(item, supplier_code: str = "", sequence=None, groups=None) -> tuple:
+    """Sort key putting an item where the sequence says it goes: its range,
+    the block of that range (Setup → Item groups), then the range's own order."""
     seq = [str(x) for x in (sequence or DEFAULT_SEQUENCE)]
     key = range_key(item, supplier_code)
     try:
         at = [x.lower() for x in seq].index(key.lower()) if key else len(seq)
     except ValueError:
         at = len(seq)
+    blk = item_block(item, supplier_code, groups)
     gd = str(getattr(item, "gd", "") or getattr(item, "code", "") or "")
     code = str(getattr(item, "code", "") or "")
     if key == "Oswin":
         length = _num(getattr(item, "length", "")) or 0.0
         group = str(getattr(item, "group", "") or "")
-        return (at, bore_mm(item), group, length, gd, code)
-    return (at, 0.0, "", 0.0, gd, code)
+        return (at, blk["at"], blk["cat_at"], bore_mm(item), group, length, gd, code)
+    return (at, blk["at"], blk["cat_at"], 0.0, "", 0.0, gd, code)
 
 
-def rank_by(suppliers, sequence=None):
+def rank_by(suppliers, sequence=None, groups=None):
     """A sort key over items, given the suppliers they point at."""
     codes = {s.id: s.code for s in suppliers}
-    return lambda it: item_rank(it, codes.get(getattr(it, "supplier_id", None), ""), sequence)
+    return lambda it: item_rank(it, codes.get(getattr(it, "supplier_id", None), ""), sequence, groups)
 
 
 # ============================================================================
@@ -451,14 +507,82 @@ def invoice_status(inv) -> str:
     return "Ready to dispatch"
 
 
+# ---------------- Carton serials ----------------
+# Each line's first carton number is allotted once, when the line joins the
+# invoice, and stored on it (`serial_from`). Customs have the numbers from that
+# moment, so they never move again: dropping an item the supplier could not
+# send leaves its numbers unused (i1 = 1, i3 = 3 — not i3 = 2), and a line
+# added later takes the numbers after the last one in use. Only changing the
+# invoice's serial start moves them, all by the same amount, or an explicit
+# "renumber", which allots them afresh.
+def serial_base(inv) -> int:
+    """The invoice's first carton number: its serial start, else the number in
+    its shipping marks ("GDW 6001-…"), else 2001 — as the documents read it."""
+    start = int(getattr(inv, "serial_start", 0) or 0)
+    if start:
+        return start
+    m = re.search(r"(\d{3,})", str((getattr(inv, "ship", None) or {}).get("marks") or ""))
+    return int(m.group(1)) if m else 2001
+
+
+def line_serial_froms(lines, base: int) -> list:
+    """Each line's first carton: the stored one, or — for a line that has none
+    — the next number down the invoice, as it was always worked out."""
+    out, nxt = [], base
+    for l in lines:
+        frm = l.serial_from if getattr(l, "serial_from", None) is not None else nxt
+        out.append(frm)
+        nxt = max(nxt, frm + int(l.boxes or 0))
+    return out
+
+
+def allot_serials(lines, base: int) -> int:
+    """Number the lines straight through from `base`, in their order.
+    Returns one past the last number given."""
+    nxt = base
+    for l in lines:
+        l.serial_from = nxt
+        nxt += int(l.boxes or 0)
+    return nxt
+
+
+def serial_next_of(inv) -> int:
+    """One past the highest carton number the invoice has allotted."""
+    base = serial_base(inv)
+    ends = [f + int(l.boxes or 0) for l, f in zip(inv.lines, line_serial_froms(inv.lines, base))]
+    return max([base, int(getattr(inv, "serial_next", 0) or 0)] + ends)
+
+
+def lock_serials(lines, kept: dict, base: int, floor: int = 0) -> tuple:
+    """Give each line its carton numbers, keeping the ones already allotted.
+
+    `kept` maps item id → the first carton that line already has. Those lines
+    keep it; a line new to the invoice takes the numbers from `floor` (one past
+    the highest ever allotted) or past the highest now in use, whichever is
+    later. Returns (clashes, next): the pairs of kept lines whose ranges now
+    overlap — a line whose boxes grew into the next one's numbers, which the
+    caller refuses — and one past the highest number now allotted.
+    """
+    locked = [l for l in lines if kept.get(l.item_id) is not None]
+    for l in locked:
+        l.serial_from = int(kept[l.item_id])
+    spans = sorted(((l.serial_from, l.serial_from + int(l.boxes or 0) - 1, l)
+                    for l in locked if int(l.boxes or 0) > 0), key=lambda x: (x[0], x[1]))
+    clashes = [(a[2], b[2]) for a, b in zip(spans, spans[1:]) if b[0] <= a[1]]
+    nxt = max([base, floor] + [l.serial_from + int(l.boxes or 0) for l in locked])
+    for l in lines:
+        if kept.get(l.item_id) is None:
+            l.serial_from = nxt
+            nxt += int(l.boxes or 0)
+    return clashes, nxt
+
+
 def invoice_serials(inv, items_by_id) -> list:
-    start = int(inv.serial_start or 0)
+    froms = line_serial_froms(inv.lines, serial_base(inv))
     out = []
-    for l in inv.lines:
-        it = items_by_id.get(l.item_id)
+    for l, frm in zip(inv.lines, froms):
         boxes = int(l.boxes or 0)
-        frm, to = start, start + boxes - 1
-        start += boxes
+        to = frm + boxes - 1
         out.append({
             "item_id": l.item_id,
             "supplier_id": l.supplier_id,

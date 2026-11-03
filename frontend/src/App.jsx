@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from "./auth/AuthProvider.jsx";
 import LoginPage from "./auth/LoginPage.jsx";
 import ForcePasswordChange from "./auth/ForcePasswordChange.jsx";
 import AppShell from "./components/layout/AppShell.jsx";
+import NotFound from "./components/layout/NotFound.jsx";
 import { Spinner, Empty } from "./components/ui/index.jsx";
 import { ROUTE_PERMS, firstAllowedRoute } from "./lib/nav.js";
 
@@ -65,7 +66,7 @@ function Routed() {
         <Route path="reports" element={guard("/reports", <ReportsPage />)} />
         <Route path="documents" element={guard("/documents", <DocumentsPage key="ALL" />)} />
         <Route path="setup" element={guard("/setup", <SetupPage />)} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
   );

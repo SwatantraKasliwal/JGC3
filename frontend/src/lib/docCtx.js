@@ -1,4 +1,4 @@
-import { itemRank } from "./sequence.js";
+import { itemBlock, itemRank } from "./sequence.js";
 import { DOC_BLANKABLE } from "./columnPrefs.js";
 
 /* Adapter — API records into the shape the document engine reads.
@@ -42,11 +42,11 @@ export const docItem = (i, hidden) => {
 /* The item sequence as a comparator over document items — what L() and
    orderAgg() list rows in (Oswin by bore, then VP-PP, Hansa-PP, Hansa-GRN,
    VP-GRN; Setup → Additional settings may reorder it). */
-export function itemComparator(suppliers = [], sequence) {
+export function itemComparator(suppliers = [], sequence, groups) {
   const codeOf = Object.fromEntries((suppliers || []).map((s) => [s.id, s.code]));
   const keys = new Map();
   const keyOf = (it) => {
-    if (!keys.has(it)) keys.set(it, itemRank(it, codeOf[it?.supplierId] || "", sequence));
+    if (!keys.has(it)) keys.set(it, itemRank(it, codeOf[it?.supplierId] || "", sequence, groups || undefined));
     return keys.get(it);
   };
   return (a, b) => {
@@ -57,6 +57,13 @@ export function itemComparator(suppliers = [], sequence) {
     }
     return 0;
   };
+}
+
+/* Which block of its range a document item sits in (Setup → Item groups) —
+   what L() and orderAgg() head their rows with. */
+export function itemBlocker(suppliers = [], groups) {
+  const codeOf = Object.fromEntries((suppliers || []).map((s) => [s.id, s.code]));
+  return (it) => itemBlock(it || {}, codeOf[it?.supplierId] || "", groups || undefined);
 }
 
 export const docBuyer = (b) => (b ? {
@@ -105,6 +112,10 @@ export const docInvoice = (inv) => (inv ? {
     itemId: l.item_id, supplierId: l.supplier_id, boxes: l.boxes,
     unitValue: l.unit_value, valueMode: l.value_mode,
     unitFob100: l.unit_fob100, fobMode: l.fob_mode,
+    /* The first carton this line was allotted — kept for good, so a line
+       removed from the invoice leaves its numbers unused rather than shifting
+       the rest (customs already have them). Null on an API that predates it. */
+    serialFrom: l.serial_from ?? null,
   })),
 } : null);
 
@@ -135,12 +146,13 @@ export const docOrderLines = (poLines, itemsById) =>
 
    `supplierId` narrows every paper to one supplier's goods (the Documents
    page's supplier filter); `sequence` is the item order the rows are listed
-   in; `hidden` the item fields Setup → Items has unticked; `colRules` the
+   in and `groups` the blocks a range is split into (Setup → Item groups);
+   `hidden` the item fields Setup → Items has unticked; `colRules` the
    columns Setup → Document columns hides or deletes, per document
    (lib/docColumns.js rulesByDoc). */
 export function docCtx({
   invoice, items = [], buyers = [], suppliers = [], poLines = [], transports = [], invoices = [],
-  supplierId = "", sequence, hidden, colRules,
+  supplierId = "", sequence, groups, hidden, colRules,
 }) {
   const docItems = items.map((i) => docItem(i, hidden));
   const byId = Object.fromEntries(docItems.map((i) => [i.id, i]));
@@ -152,7 +164,8 @@ export function docCtx({
     inv, buyer, items: docItems,
     supplierId: supplierId || "",
     colRules: colRules || {},
-    cmpItems: itemComparator(suppliers, sequence),
+    cmpItems: itemComparator(suppliers, sequence, groups),
+    blockOf: itemBlocker(suppliers, groups),
     buyerMaster: supplierId ? lines.filter((r) => r.item.supplierId === supplierId) : lines,
     invoices: invoices.map(docInvoice),
     SUPPLIERS: sups,
@@ -174,7 +187,7 @@ export function docCtx({
    that number as the order reference. */
 export function poCtx({
   po, items = [], buyers = [], suppliers = [], poLines = [], transports = [],
-  supplierId = "", sequence, hidden, colRules,
+  supplierId = "", sequence, groups, hidden, colRules,
 }) {
   const docItems = items.map((i) => docItem(i, hidden));
   const byId = Object.fromEntries(docItems.map((i) => [i.id, i]));
@@ -190,7 +203,8 @@ export function poCtx({
     po,
     supplierId: supplierId || "",
     colRules: colRules || {},
-    cmpItems: itemComparator(suppliers, sequence),
+    cmpItems: itemComparator(suppliers, sequence, groups),
+    blockOf: itemBlocker(suppliers, groups),
     inv: {
       id: `po-${po}`, invoiceNo: "", date: date || new Date().toISOString().slice(0, 10),
       buyerId, rbi, serialStart: 1,

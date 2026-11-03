@@ -167,6 +167,7 @@ export const options = {
   itemColumns: () => apiGet("/api/options/item-columns"),
   saveItemColumns: (cols) => apiPut("/api/options/item-columns", { cols }),
   saveSequence: (values) => apiPut("/api/options/item-sequence", { values }),
+  saveGroups: (ranges) => apiPut("/api/options/item-groups", { ranges }),
   // Setup → Document columns: the columns each document hides or deletes.
   docColumns: () => apiGet("/api/options/doc-columns"),
   saveDocColumns: (rules) => apiPut("/api/options/doc-columns", { rules }),

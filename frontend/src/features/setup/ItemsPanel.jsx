@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import {
   Card, CardHead, Btn, Seg, Input, Select, Pill, Mono, DataTable, Modal, EditBtn,
-  Empty, Note, Info, SearchInput, FormulaPanel, Spinner, ErrorState, DownloadPair,
+  Empty, Note, Info, SearchInput, FormulaPanel, Spinner, ErrorState, DownloadPair, ResultState,
 } from "../../components/ui/index.jsx";
 import {
   useItems, useItemGroups, useCreateItem, useUpdateItem, useDeleteItem,
@@ -237,15 +237,17 @@ const EXPORT_BY_KEY = (supCode) => ({
 function ItemPicker({ suppliers, onPick, onClose }) {
   const [q, setQ] = useState("");
   const [sup, setSup] = useState("");
-  const list = useItems({ supplier_id: sup, q: useDebounced(q) });
+  const dq = useDebounced(q);
+  const list = useItems({ supplier_id: sup, q: dq });
   const rows = list.data || [];
+  const searching = list.data === undefined || list.isPlaceholderData || dq !== q;
   const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
 
   return (
     <Modal title="Edit an item" icon={Pencil} onClose={onClose}
       footer={<>
         <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
-          {list.isLoading ? "Searching…" : `${rows.length} item${rows.length === 1 ? "" : "s"} match`}
+          {searching ? "Searching…" : `${rows.length} item${rows.length === 1 ? "" : "s"} match`}
         </span>
         <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
       </>}>
@@ -257,8 +259,8 @@ function ItemPicker({ suppliers, onPick, onClose }) {
         </Select>
       </div>
 
-      {list.isLoading ? <Spinner label="Loading items…" />
-        : rows.length ? (
+      <ResultState query={list} count={rows.length} pending={dq !== q} loading="Loading items…"
+        empty={<Empty icon={Search} title="No item matches">Try the GD code, the item code, the supplier, or part of the description.</Empty>}>
           <div style={{ maxHeight: 420, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10 }}>
             {rows.map((it, i) => (
               <button key={it.id} className="pick-row" style={{ borderTop: i ? "1px solid var(--border)" : "none" }}
@@ -273,9 +275,7 @@ function ItemPicker({ suppliers, onPick, onClose }) {
               </button>
             ))}
           </div>
-        ) : (
-          <Empty icon={Search} title="No item matches">Try the GD code, the item code, the supplier, or part of the description.</Empty>
-        )}
+      </ResultState>
     </Modal>
   );
 }
@@ -310,7 +310,8 @@ export default function ItemsPanel() {
   const [q, setQ] = useState("");
   const [onlyGaps, setOnlyGaps] = useState(false);
 
-  const list = useItems({ supplier_id: supFilter, group, q: useDebounced(q) });
+  const dq = useDebounced(q);
+  const list = useItems({ supplier_id: supFilter, group, q: dq });
   const remove = useDeleteItem();
 
   const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
@@ -427,16 +428,17 @@ export default function ItemsPanel() {
           {filtering && <Btn size="sm" variant="ghost" onClick={clear}>Clear</Btn>}
           <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Pencil to edit any value</span>
         </CardHead>
-        {list.isLoading ? <Spinner label="Loading items…" />
-          : list.error ? <ErrorState error={list.error} onRetry={list.refetch} />
-            : shownItems.length
-              ? <DataTable serial columns={columns} rows={shownItems} rowKey={(it) => it.id} freeze={5} maxHeight={560} />
-              : filtering
-                ? <Empty icon={Search} title="No item matches" action={<Btn size="sm" onClick={clear}>Clear filters</Btn>}>Clear the search or pick a different supplier.</Empty>
-                : <Empty icon={Layers} title="No items yet" action={<Btn icon={Plus} onClick={() => setAddItem(true)}>Add the first item</Btn>}>
-                  The master is empty. Add items here, or load the client's workbook with
-                  {" "}<span className="mono">python backend/scripts/import_masters.py</span>.
-                </Empty>}
+        {/* Loading, then the items — "no item matches" only once the search
+            has come back empty, never while it is still running. */}
+        <ResultState query={list} count={shownItems.length} pending={dq !== q} loading="Loading items…"
+          empty={filtering
+            ? <Empty icon={Search} title="No item matches" action={<Btn size="sm" onClick={clear}>Clear filters</Btn>}>Clear the search or pick a different supplier.</Empty>
+            : <Empty icon={Layers} title="No items yet" action={<Btn icon={Plus} onClick={() => setAddItem(true)}>Add the first item</Btn>}>
+              The master is empty. Add items here, or load the client's workbook with
+              {" "}<span className="mono">python backend/scripts/import_masters.py</span>.
+            </Empty>}>
+          <DataTable serial columns={columns} rows={shownItems} rowKey={(it) => it.id} freeze={5} maxHeight={560} />
+        </ResultState>
       </Card>
 
       <FormulaPanel title="What gets calculated from these fields?" rows={formulas} />

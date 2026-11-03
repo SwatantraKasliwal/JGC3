@@ -1,25 +1,33 @@
 import { useMemo, useState } from "react";
-import { FileText, Check, Trash2, Hash, Plus, X } from "lucide-react";
+import { FileText, Check, Trash2, Hash, Plus, X, AlertTriangle } from "lucide-react";
 import {
-  Modal, Btn, Field, Input, NumberInput, Pill, Mono, Note, Empty, XScroll,
+  Modal, Btn, Field, Input, NumberInput, Pill, Mono, Note, Empty, XScroll, Spinner, ErrorState,
 } from "../../components/ui/index.jsx";
 import ItemPicker from "../../components/ItemPicker.jsx";
 import { useItems, useSuppliers, useInvoiceMutations, useOptions } from "../../api/hooks.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
 import { useAuth } from "../../auth/AuthProvider.jsx";
 import { bySequence } from "../../lib/sequence.js";
+import { previewSerials, rangeText } from "../../lib/serials.js";
 
 /* Edit an invoice — number, date, serial start, and the lines themselves:
    retype the boxes, drop an item that never went on the container, or add one
    that was missed when the packing was recorded. Serial ranges preview live,
    so what each line's cartons will be numbered is visible before saving.
 
+   Carton numbers are locked once allotted (lib/serials.js): customs already
+   have them, so removing an item leaves its numbers unused instead of
+   shifting every line after it, and an added item takes the numbers after the
+   last one given. "Renumber all cartons" is the deliberate way to close the
+   gaps — for an invoice whose numbers have not gone to customs yet.
+
    An item already on the invoice keeps the price it was raised at; a line
    added here is priced from the orders its boxes clear, exactly as recording
    the packing would have priced it. Deleting the invoice outright is left to
    an admin (the API refuses anyone else). */
 export default function InvoiceEditModal({ inv, onClose }) {
-  const items = useItems().data || [];
+  const itemsQ = useItems();
+  const items = itemsQ.data || [];
   const suppliers = useSuppliers().data || [];
   const { update, remove } = useInvoiceMutations();
   const { isAdmin } = useAuth();
@@ -34,10 +42,13 @@ export default function InvoiceEditModal({ inv, onClose }) {
   })));
   const [confirm, setConfirm] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [renumber, setRenumber] = useState(false);
 
   const byId = useMemo(() => Object.fromEntries(items.map((i) => [i.id, i])), [items]);
   const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
-  const sequence = useOptions().data?.item_sequence;
+  const opts = useOptions().data;
+  const sequence = opts?.item_sequence;
+  const itemGroups = opts?.item_groups;
 
   const setBoxes = (key, v) => setLines((p) => p.map((l) => (l.key === key ? { ...l, boxes: v } : l)));
   const drop = (key) => setLines((p) => p.filter((l) => l.key !== key));
@@ -46,7 +57,7 @@ export default function InvoiceEditModal({ inv, onClose }) {
      that comes after it. The lines already there keep their order, so the
      cartons already numbered on this invoice do not move. */
   const add = (picked) => {
-    const cmp = bySequence({ suppliers, sequence, getItem: (l) => byId[l.item_id] || {}, supplierOf: (l) => l.supplier_id });
+    const cmp = bySequence({ suppliers, sequence, groups: itemGroups, getItem: (l) => byId[l.item_id] || {}, supplierOf: (l) => l.supplier_id });
     setLines((p) => picked.reduce((list, { variant, qty }, i) => {
       const line = {
         key: `new:${variant.item_id}:${Date.now()}:${i}`, item_id: variant.item_id,
@@ -60,14 +71,14 @@ export default function InvoiceEditModal({ inv, onClose }) {
 
   const totalBoxes = lines.reduce((s, l) => s + (Number(l.boxes) || 0), 0);
 
-  const ranges = useMemo(() => {
-    let sr = Number(serialStart) || 0;
-    return lines.map((l) => {
-      const b = Number(l.boxes) || 0;
-      const from = sr; const to = sr + b - 1; sr += b;
-      return b ? `${from}–${to}` : "—";
-    });
-  }, [lines, serialStart]);
+  /* What the save will number each line — kept numbers for the lines already
+     on the invoice, the next free ones for a line added here. */
+  const serials = useMemo(
+    () => previewSerials({ inv, lines, start: serialStart, renumber }),
+    [inv, lines, serialStart, renumber],
+  );
+  const clashing = new Set(serials.clashes.flat());
+  const gdOf = (key) => { const l = lines.find((x) => x.key === key); return byId[l?.item_id]?.gd || "a line"; };
 
   const save = () => update.mutate(
     {
@@ -75,8 +86,11 @@ export default function InvoiceEditModal({ inv, onClose }) {
       body: {
         invoice_no: invoiceNo, date, serial_start: Number(serialStart) || 0,
         lines: lines.map((l) => ({ item_id: l.item_id, supplier_id: l.supplier_id, boxes: Number(l.boxes) || 0 })),
+        ...(renumber ? { renumber: true } : {}),
       },
     },
+    // A refusal (an overlap the preview missed, a lost connection) is toasted
+    // by the mutation itself, and the form stays open to correct it.
     { onSuccess: () => { toast(`Invoice ${invoiceNo} updated — ${lines.length} line${lines.length === 1 ? "" : "s"}, ${totalBoxes} boxes`); onClose(); } },
   );
   const del = () => remove.mutate(inv.id, {
@@ -95,7 +109,9 @@ export default function InvoiceEditModal({ inv, onClose }) {
           : isAdmin ? <Btn variant="ghost" size="sm" icon={Trash2} onClick={() => setConfirm(true)}>Delete invoice</Btn> : <span />}
         <div className="row" style={{ gap: 8 }}>
           <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
-          <Btn size="sm" icon={Check} disabled={update.isPending || !lines.length} onClick={save}>Save changes</Btn>
+          <Btn size="sm" icon={Check} disabled={update.isPending || !lines.length || serials.clashes.length > 0} onClick={save}>
+            {update.isPending ? "Saving…" : "Save changes"}
+          </Btn>
         </div>
       </>}>
       {/* The invoice's own fields, and the one thing you might add, on a line. */}
@@ -103,7 +119,7 @@ export default function InvoiceEditModal({ inv, onClose }) {
         <div className="grid-3" style={{ flex: "1 1 min(520px, 100%)" }}>
           <Field label="Invoice number"><Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} /></Field>
           <Field label="Date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
-          <Field label="Serial (carton) start" hint="The first carton number on this invoice — each line takes the next block of numbers.">
+          <Field label="Serial (carton) start" hint="The first carton number on this invoice. Changing it moves every line's numbers by the same amount; each line keeps its place.">
             <NumberInput value={serialStart} onChange={setSerialStart} placeholder="e.g. 2001" />
           </Field>
         </div>
@@ -117,12 +133,28 @@ export default function InvoiceEditModal({ inv, onClose }) {
           chosen={lines.map((l) => l.item_id)} onAdd={add} />
       )}
 
-      <Note tone="teal">
-        <Hash size={12} /> Serial ranges recalculate as you change the boxes below ·
-        <b style={{ color: "var(--ink)" }}> {totalBoxes} boxes</b> on {lines.length} line{lines.length === 1 ? "" : "s"}.
+      <Note tone="teal" icon={Hash}>
+        {renumber
+          ? <>Every line will be numbered afresh from {Number(serialStart) || "the start"}, closing any gaps.</>
+          : <>Allotted serials stay with their line — removing an item leaves its numbers unused, and an added item takes the numbers from {serials.next}.</>}
+        {" "}· <b style={{ color: "var(--ink)" }}>{totalBoxes} boxes</b> on {lines.length} line{lines.length === 1 ? "" : "s"}
+        {!renumber && serials.gaps > 0 ? <> · {serials.gaps} number{serials.gaps === 1 ? "" : "s"} unused</> : null}.
       </Note>
+      <label className="row" style={{ gap: 8, fontSize: 12.5, color: "var(--muted)", margin: "8px 0 12px" }}>
+        <input type="checkbox" checked={renumber} onChange={(e) => setRenumber(e.target.checked)} />
+        Renumber all cartons from the serial start — only if these numbers have not gone to customs yet
+      </label>
+      {serials.clashes.length > 0 && (
+        <Note tone="amber" icon={AlertTriangle}>
+          {serials.clashes.map(([a, b]) => `${gdOf(a)} now runs into ${gdOf(b)}’s cartons`).join("; ")}.
+          Allotted serials are fixed, so the boxes cannot grow past the next line’s numbers — lower them,
+          or tick “Renumber all cartons”.
+        </Note>
+      )}
 
-      {lines.length ? (
+      {itemsQ.data === undefined ? (
+        itemsQ.isError ? <ErrorState error={itemsQ.error} onRetry={itemsQ.refetch} /> : <Spinner label="Loading the invoice lines…" />
+      ) : lines.length ? (
         // The table scrolls sideways on its own, so a narrow screen does not
         // drag the invoice fields off with it.
         <XScroll className="tbl-wrap edit-tbl" deps={[lines.length]}>
@@ -134,7 +166,7 @@ export default function InvoiceEditModal({ inv, onClose }) {
             </tr>
           </thead>
           <tbody>
-            {lines.map((l, i) => {
+            {lines.map((l) => {
               const it = byId[l.item_id] || {};
               return (
                 <tr key={l.key}>
@@ -149,7 +181,9 @@ export default function InvoiceEditModal({ inv, onClose }) {
                       aria-label={`Boxes for ${it.gd || "this line"}`}
                       value={l.boxes} onChange={(v) => setBoxes(l.key, v)} />
                   </td>
-                  <td><Mono>{ranges[i]}</Mono></td>
+                  <td style={clashing.has(l.key) ? { color: "var(--amber-ink)", fontWeight: 700 } : undefined}>
+                    <Mono>{rangeText(serials.ranges[l.key], l.boxes)}</Mono>
+                  </td>
                   <td className="r">
                     <button className="icon-btn bare" title={`Remove ${it.gd || "this line"} from the invoice`} onClick={() => drop(l.key)}>
                       <Trash2 size={14} />

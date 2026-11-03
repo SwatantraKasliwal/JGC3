@@ -7,9 +7,10 @@ of them live in the `settings` table, one key each, because they are a few
 dozen short strings the client edits in the UI — not something worth a table
 and a migration apiece.
 
-Two more keys sit here for the same reason: the item master's column layout
+A few more keys sit here for the same reason: the item master's column layout
 (which columns Setup → Items shows, and therefore which item fields the
-reports and downloads carry) and the item sequence every list is sorted in.
+reports and downloads carry), the item sequence every list is sorted in, and
+the item groups that split a range into blocks of its own.
 
 A list nobody has saved yet is not empty: it is offered pre-filled from the
 values the shipments already use, so the first dropdown anybody opens carries
@@ -36,6 +37,7 @@ BANKS_KEY = "banks"
 COLUMNS_KEY = "item_columns"
 DOC_COLUMNS_KEY = "doc_columns"
 SEQUENCE_KEY = "item_sequence"
+GROUPS_KEY = "item_groups"
 
 MAX_ENTRIES = 200
 MAX_TEXT = 200
@@ -45,8 +47,17 @@ MAX_TEXT = 200
 IFSC_RE = re.compile(r"^[A-Z]{4}0[A-Z0-9]{6}$")
 
 
+def _rows(db: Session) -> dict:
+    """Every settings row, read once per request (session) and kept: a page
+    asks for half a dozen keys at once, and each separate read is a round trip
+    to a database that can be a third of a second away."""
+    if "settings_rows" not in db.info:
+        db.info["settings_rows"] = {r.key: r for r in db.query(models.Setting).all()}
+    return db.info["settings_rows"]
+
+
 def _row(db: Session, key: str):
-    return db.get(models.Setting, key)
+    return _rows(db).get(key)
 
 
 def _save(db: Session, key: str, value) -> None:
@@ -54,8 +65,21 @@ def _save(db: Session, key: str, value) -> None:
     if row:
         row.value = value
     else:
-        db.add(models.Setting(key=key, value=value))
+        row = models.Setting(key=key, value=value)
+        db.add(row)
+        _rows(db)[key] = row
     db.commit()
+
+
+def _sources(db: Session) -> tuple:
+    """The invoices and buyers the unsaved lists are pre-filled from — read
+    once for all of them rather than once a list."""
+    if "option_sources" not in db.info:
+        db.info["option_sources"] = (
+            db.query(models.Invoice).order_by(models.Invoice.date).all(),
+            db.query(models.Buyer).all(),
+        )
+    return db.info["option_sources"]
 
 
 def clean_list(values) -> list[str]:
@@ -77,14 +101,14 @@ def _in_use(db: Session, key: str) -> list[str]:
     ship_field = {"terms_delivery": "terms", "terms_payment": "payment",
                   "ports_loading": "pol", "ports_ship_to": "pod"}.get(key)
     found: list[str] = []
-    if ship_field:
-        for inv in db.query(models.Invoice).order_by(models.Invoice.date).all():
-            v = (inv.ship or {}).get(ship_field)
-            if v:
-                found.append(v)
+    invoices, buyers = _sources(db) if ship_field else ([], [])
+    for inv in invoices:
+        v = (inv.ship or {}).get(ship_field)
+        if v:
+            found.append(v)
     if key == "ports_ship_to":
-        found += [b.ship_to for b in db.query(models.Buyer).all() if b.ship_to]
-        for b in db.query(models.Buyer).all():
+        found += [b.ship_to for b in buyers if b.ship_to]
+        for b in buyers:
             found += list(b.ports or [])
     if key == "packaging_types":
         found += [i[0] for i in db.query(models.Item.packaging_type).distinct().all() if i[0]]
@@ -172,6 +196,68 @@ def save_sequence(db: Session, values) -> list[str]:
     return get_sequence(db)
 
 
+# ---------- the item groups inside each range ----------
+
+MAX_GROUPS = 20
+MAX_CATS = 60
+
+
+def get_groups(db: Session) -> dict:
+    """{range: [group …]} — what calc.item_block reads. Nothing saved yet means
+    the default: Oswin's PMF pipes in a block of their own."""
+    row = _row(db, GROUPS_KEY)
+    if row is None:
+        return {k: [dict(g) for g in v] for k, v in calc.DEFAULT_GROUPS.items()}
+    return dict((row.value or {}).get("ranges") or {})
+
+
+def clean_groups(value) -> dict:
+    """Ranges the sequence knows, categories as capital letters, a category in
+    one group of its range only, and exactly one "rest" block per range."""
+    known = {k.lower(): k for k in calc.DEFAULT_SEQUENCE}
+    out: dict = {}
+    for rng, groups in (value or {}).items():
+        name = known.get(str(rng or "").strip().lower())
+        if not name or not isinstance(groups, list):
+            continue
+        seen_cats, kept, has_rest = set(), [], False
+        for g in groups[:MAX_GROUPS]:
+            if not isinstance(g, dict):
+                continue
+            rest = bool(g.get("rest"))
+            if rest and has_rest:
+                continue
+            cats = []
+            if not rest:
+                for c in g.get("cats") or []:
+                    c = re.sub(r"[^A-Za-z]", "", str(c or "")).upper()[:12]
+                    if c and c not in seen_cats:
+                        seen_cats.add(c)
+                        cats.append(c)
+                if not cats:
+                    continue                  # an empty group has nothing to print
+            has_rest = has_rest or rest
+            gid = re.sub(r"[^A-Za-z0-9_-]", "", str(g.get("id") or ""))[:24] or f"g{len(kept)}"
+            kept.append({
+                "id": "rest" if rest else gid,
+                "name": re.sub(r"\s+", " ", str(g.get("name") or "")).strip()[:60],
+                "rest": rest,
+                "cats": cats[:MAX_CATS],
+                "sort": "natural" if rest or g.get("sort") == "natural" else "listed",
+            })
+        if not has_rest:
+            kept.insert(0, {"id": "rest", "name": "", "rest": True, "cats": [], "sort": "natural"})
+        # A range with nothing but its rest block is the plain range again.
+        if len(kept) > 1 or kept[0]["name"]:
+            out[name] = kept
+    return out
+
+
+def save_groups(db: Session, value) -> dict:
+    _save(db, GROUPS_KEY, {"ranges": clean_groups(value)})
+    return get_groups(db)
+
+
 def item_rank(db: Session):
     """The sort key every list of items is put in order with."""
-    return calc.rank_by(db.query(models.Supplier).all(), get_sequence(db))
+    return calc.rank_by(db.query(models.Supplier).all(), get_sequence(db), get_groups(db))

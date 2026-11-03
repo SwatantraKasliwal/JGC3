@@ -9,6 +9,7 @@ import { useBadges } from "../../api/hooks.js";
 import { VIEWS, MENU, SETUP, ROUTE_TITLES } from "../../lib/nav.js";
 import { DOC_GROUPS, DOC_META } from "../../lib/docs.js";
 import { APP_VERSION, versionLabel } from "../../lib/releases.js";
+import ErrorBoundary from "./ErrorBoundary.jsx";
 import { TEXT_SIZES, textSizeOf, readTextSize, applyTextSize } from "../../lib/textSize.js";
 import { WhatsNewModal, ReleaseNotesModal } from "./ReleaseNotes.jsx";
 import { BrandMark } from "../ui/index.jsx";
@@ -385,7 +386,11 @@ export default function AppShell() {
         </div>
 
         <div className="page">
-          <Outlet />
+          {/* A page that fails to draw is contained here; keyed on the route so
+              leaving it clears the error. */}
+          <ErrorBoundary key={pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </div>
 
         <footer className="footer">

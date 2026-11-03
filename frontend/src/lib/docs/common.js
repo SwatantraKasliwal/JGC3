@@ -139,11 +139,54 @@ export function L(ctx) {
   const rows = invoiceLines(ctx);
   const kept = ctx.supplierId ? rows.filter((r) => r.supId === ctx.supplierId) : rows;
   if (!ctx.cmpItems) return kept;
-  return kept.map((r, i) => [r, i]).sort((a, b) => ctx.cmpItems(a[0].it, b[0].it) || a[1] - b[1]).map(([r]) => r);
+  return withBlocks(ctx, kept.map((r, i) => [r, i]).sort((a, b) => ctx.cmpItems(a[0].it, b[0].it) || a[1] - b[1]).map(([r]) => r));
 }
+
+/* Each row told which block of its range it sits in (Setup → Item groups —
+   Oswin's PMF pipes, by default), and the first row of every block given the
+   heading it opens: `blockHead`. A list that is all one block gets no
+   headings, so it prints exactly as it always did. */
+export function withBlocks(ctx, rows) {
+  if (!ctx.blockOf) return rows;
+  rows.forEach((r) => { r.block = ctx.blockOf(r.it); r.blockHead = null; });
+  if (new Set(rows.map((r) => r.block.key)).size < 2) return rows;
+  rows.forEach((r, i) => { if (i === 0 || rows[i - 1].block.key !== r.block.key) r.blockHead = r.block.label; });
+  return rows;
+}
+
+/* The supplier sheets (7, 8, 9) rule a band in above a row where the size
+   group changes — and where a block of the range opens (withBlocks), which
+   then heads the band with its own name ("Oswin · PMF"). Returns the band's
+   label for a row, or null when the row carries straight on. `firstBand` is
+   the group the sheet's own header already names. */
+export function bandOpener(rows, firstBand) {
+  let band = firstBand;
+  return (r, i) => {
+    const g = String(r.it.group || "").trim();
+    const newBlock = !!r.blockHead && i > 0;
+    if (!newBlock && !(g && g !== band)) return null;
+    if (g) band = g;
+    return newBlock && !r.block.rest ? r.blockHead : (g || r.blockHead);
+  };
+}
+
+/* The same heading on a hand-built worksheet: the label boxed across the
+   sheet's `width` columns. `merges` collects the merge it needs. */
+export function blockSheetRow(label, width, rowNo, merges) {
+  merges.push(`A${rowNo}:${String.fromCharCode(64 + width)}${rowNo}`);
+  return [{ v: label, s: WB.poL }, ...Array.from({ length: width - 2 }, () => ({ v: "", s: WB.poM })), { v: "", s: WB.poR }];
+}
+
+/* The heading row a hand-built table opens a block with — the same band the
+   tableOf() tables get, spanning `cols` columns. */
+export const blockRow = (r, cols) => (r.blockHead
+  ? `<tr><td class="sec" colspan="${cols}">${esc(r.blockHead)}</td></tr>` : "");
 
 function invoiceLines(ctx) {
   const ex = exRate(ctx);
+  /* A line's cartons start where they were allotted (`serialFrom`, kept for
+     good). A line without one — an API that predates it — takes the next
+     number down the invoice, as every line once did. */
   let sr = Number(ctx.inv.serialStart) || marksStart(ctx);
   return ctx.inv.lines.map((l) => {
     const master = ctx.items.find((x) => x.id === l.itemId) || l.item || {};
@@ -167,7 +210,8 @@ function invoiceLines(ctx) {
     const rbiTotal = fobTotal * ex, rateKg = netTotal ? fobTotal / netTotal : 0;
     const bg = Number(it.bgPerBox) || 0, pc = Number(it.pPerBox) || 0, ttl = stickersPerBox(it);
     const stickers = Math.ceil(labelsFor(it, boxes)), sheets = sheetsFor(it, boxes);
-    const from = sr, to = sr + boxes - 1; sr += boxes;
+    const from = l.serialFrom != null ? Number(l.serialFrom) : sr, to = from + boxes - 1;
+    sr = Math.max(sr, from + boxes);
     const range = boxes ? `${from}-${to}` : "—";
     /* The orders these boxes cleared — not every order the item has ever
        been on, which put the same full list against every line. */
@@ -192,7 +236,7 @@ export function orderAgg(ctx) {
     if (!g[it.id]) g[it.id] = { it, qty: 0, pos: new Set(), rbi: r.rbi };
     g[it.id].qty += Number(r.qty) || 0; g[it.id].pos.add(r.po); g[it.id].rbi = r.rbi;
   });
-  return Object.values(g).map((x) => {
+  const rows = Object.values(g).map((x) => {
     const it = x.it, qty = x.qty, packing = Number(it.packing) || 0;
     const boxes = Math.ceil(qty / packing) || 0;
     const volTotal = boxes * (Number(it.volume) || 0);
@@ -207,6 +251,7 @@ export function orderAgg(ctx) {
     return { it, pos: [...x.pos].sort(), qty, packing, boxes, volTotal, netTotal, grossTotal, fobPc, fobTotal, valUnit, valTotal, rbiTotal, bg, pc, ttl, stkPerBox, stickers, sheets, typeUp };
   }).sort((a, b) => (ctx.cmpItems ? ctx.cmpItems(a.it, b.it) : 0)
     || String(a.it.gd || "").localeCompare(String(b.it.gd || "")));
+  return withBlocks(ctx, rows);
 }
 
 /* The order book seen the way the supplier PO needs it — one row per item,
@@ -318,6 +363,9 @@ export function cellData(c, row) {
 export function tableOf(cols, rows, foot, sectionRows) {
   const head = `<tr>${cols.map((c) => `<th${c.key ? ` data-k="${attr(c.key)}"` : ""}>${c.h}</th>`).join("")}</tr>`;
   const dataRow = (row) => `<tr>${cols.map((c) => `<td class="${c.r ? "r" : c.c ? "c" : ""}"${cellData(c, row)}>${c.f(row)}</td>`).join("")}</tr>`;
+  // Rows that open a block of their range (withBlocks) head it, unless the
+  // caller sections the table itself.
+  if (!sectionRows && rows.some((r) => r && r.blockHead)) sectionRows = rows.map((r) => r.blockHead || null);
   const body = rows.map((row, i) => (sectionRows && sectionRows[i]
     ? `<tr><td class="sec" colspan="${cols.length}">${esc(sectionRows[i])}</td></tr>${dataRow(row)}`
     : dataRow(row))).join("");
@@ -599,7 +647,29 @@ export const RANGES = [
   { key: "grn", head: "NYLON MOULDED FITTINGS", tab: "GRN", tabColor: "FFFFFF00", scale: 88, is: (r) => r.it.stickerRule === "grn" },
 ];
 
-export const rangesOf = (arr) => RANGES.map((g) => ({ ...g, rows: arr.filter(g.is) })).filter((g) => g.rows.length);
+/* A range split into blocks by Setup → Item groups (Oswin's PMF pipes, by
+   default) gets an annexure per block, each headed with the block's name. */
+export const rangesOf = (arr) => RANGES.flatMap((g) => {
+  const rows = arr.filter(g.is);
+  if (!rows.length) return [];
+  const parts = [];
+  rows.forEach((r) => {
+    const key = r.block?.key || "";
+    let part = parts.find((p) => p.key === key);
+    if (!part) parts.push(part = { key, block: r.block, rows: [] });
+    part.rows.push(r);
+  });
+  if (parts.length < 2) return [{ ...g, rows }];
+  const used = new Set();
+  return parts.map((p) => {
+    const name = p.block?.rest ? p.block.name : (p.block?.name || p.block?.label || "");
+    // A sheet tab: 31 characters at most, none of []:*?/\, never repeated.
+    let tab = (name ? `${g.tab} ${name}` : g.tab).replace(/[[\]:*?/\\]/g, " ").slice(0, 31).trim();
+    while (used.has(tab)) tab = `${tab.slice(0, 28)} ${used.size}`;
+    used.add(tab);
+    return { ...g, rows: p.rows, tab, head: name ? `${g.head} — ${String(name).toUpperCase()}` : g.head };
+  });
+});
 
 export const perUnitOf = (it) => (it.uom === "MTR" ? "Per Metre" : "Per Piece");
 
@@ -2233,15 +2303,21 @@ export const numOrText = (v, s) => (/^\d+$/.test(String(v || "").trim())
 
 export const ciMarks = (ctx, rows) => {
   const s = ctx.inv.ship || {};
-  const start = Number(ctx.inv.serialStart) || marksStart(ctx);
   /* The marks are the whole consignment's — the container is marked once —
      so they run over every carton on the invoice, even when the paper has
-     been narrowed to one supplier's goods. */
+     been narrowed to one supplier's goods. From the lowest carton number to
+     the highest: allotted numbers are kept, so a line dropped from the
+     invoice can leave a gap the run spans. */
+  const ends = invoiceLines(ctx).filter((r) => r.boxes > 0)
+    .map((r) => String(r.range).split("-").map(Number)).filter((p) => p.length === 2 && p.every(Number.isFinite));
+  const first = Number(ctx.inv.serialStart) || marksStart(ctx);
+  const start = ends.length ? Math.min(...ends.map((p) => p[0])) : first;
   const boxes = ctx.supplierId
     ? (ctx.inv.lines || []).reduce((n, l) => n + (Number(l.boxes) || 0), 0)
     : sum(rows, "boxes");
+  const end = ends.length ? Math.max(...ends.map((p) => p[1])) : start + Math.max(0, boxes - 1);
   const prefix = String(s.marks || "").replace(/[\d\-–\s]+/g, " ").trim() || "GDW";
-  return { prefix, start, end: start + Math.max(0, boxes - 1) };
+  return { prefix, start, end };
 };
 
 /* The letterhead mark on the customs books (18 and 19). Both files anchor it in

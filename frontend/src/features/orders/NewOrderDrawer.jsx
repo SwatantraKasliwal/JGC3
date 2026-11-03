@@ -2,9 +2,10 @@ import { useMemo, useState } from "react";
 import { ClipboardList, Check, Search, Trash2 } from "lucide-react";
 import {
   Card, Btn, Field, Input, NumberInput, Select, Pill, Mono, DataTable, Drawer, Step, Empty, SearchInput,
-  FootStats,
+  FootStats, ResultState, Spinner, ErrorState,
 } from "../../components/ui/index.jsx";
-import { useGroupedItems, useBuyers, useSuppliers, usePoMutations, useDerive } from "../../api/hooks.js";
+import { useGroupedItems, useBuyers, useSuppliers, usePoMutations, useDerive, useItems, useOptions } from "../../api/hooks.js";
+import { blockOf, blockHeads } from "../../lib/sequence.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
 import { todayISO, num, boxesExact } from "../../lib/format.js";
 import { useDebounced } from "../../lib/useDebounced.js";
@@ -30,7 +31,9 @@ export default function NewOrderDrawer({ onClose }) {
   const [qtys, setQtys] = useState({});      // item id → typed quantity
   const [q, setQ] = useState("");
 
-  const groups = useGroupedItems({ q: useDebounced(q) }).data || [];
+  const dq = useDebounced(q);
+  const found = useGroupedItems({ q: dq });
+  const groups = found.data || [];
   /* The picker above is filtered by the search box; the summary below has to
      resolve any item's siblings whether or not the search still shows them,
      so it reads the unfiltered master. React Query caches it either way. */
@@ -68,8 +71,21 @@ export default function NewOrderDrawer({ onClose }) {
     [qtys],
   );
   const derived = useDerive(useDebounced(chosen, 350));
-  const rows = derived.data?.rows || [];
   const t = derived.data?.totals || {};
+  /* The API returns the lines in the item sequence; where a block of a range
+     opens (Oswin, then Oswin · PMF …) the summary heads it, exactly as the
+     order's documents will print it. */
+  const items = useItems().data || [];
+  const itemGroups = useOptions().data?.item_groups;
+  const rows = useMemo(() => {
+    // Nothing typed is nothing to show — not the last answer held over.
+    const list = chosen.length ? derived.data?.rows || [] : [];
+    const byId = Object.fromEntries(items.map((i) => [i.id, i]));
+    const heads = blockHeads(list, blockOf({
+      suppliers, groups: itemGroups, getItem: (r) => byId[r.item_id] || r, supplierOf: (r) => r.supplier_id,
+    }));
+    return list.map((r, i) => ({ ...r, head: heads[i] }));
+  }, [derived.data, chosen.length, items, suppliers, itemGroups]);
 
   const save = () => {
     if (!po || !chosen.length) return;
@@ -126,6 +142,8 @@ export default function NewOrderDrawer({ onClose }) {
           </div>
           <Card>
             <div style={{ maxHeight: 340, overflowY: "auto" }}>
+              <ResultState query={found} count={groups.length} pending={dq !== q} loading="Loading items…"
+                empty={<Empty icon={Search} title="No item matches">Try the GD code, the item code, the supplier, or part of the description.</Empty>}>
               {groups.map((g, i) => (
                 <div key={g.key} style={{ padding: "11px 14px", borderTop: i ? "1px solid var(--border)" : "none" }}>
                   <div className="row" style={{ marginBottom: 8 }}>
@@ -167,7 +185,7 @@ export default function NewOrderDrawer({ onClose }) {
                   </div>
                 </div>
               ))}
-              {!groups.length && <Empty icon={Search} title="No item matches">Try the GD code, the item code, the supplier, or part of the description.</Empty>}
+              </ResultState>
             </div>
           </Card>
         </section>
@@ -175,9 +193,14 @@ export default function NewOrderDrawer({ onClose }) {
         <section>
           <Step n="3" title="Check the summary"
             hint="Edit the pieces or switch the supplier right here — step 2 follows along. Boxes and volume update as you type." />
-          {rows.length ? (
+          {chosen.length && !rows.length ? (
+            /* Typed, but the figures are still being worked out (or failed). */
+            <Card>{derived.isError
+              ? <ErrorState error={derived.error} onRetry={derived.refetch} title="Could not work out the boxes and volume" />
+              : <Spinner label="Working out boxes and volume…" />}</Card>
+          ) : rows.length ? (
             <Card>
-              <DataTable serial
+              <DataTable serial section={(r) => r.head}
                 freeze={5}
                 columns={hidePriceCols([
                   { key: "gd", w: 96, label: "GD code", render: (r) => <Mono>{r.gd}</Mono> },
