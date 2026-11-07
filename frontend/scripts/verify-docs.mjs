@@ -142,6 +142,50 @@ for (const no of ["7", "8", "9"]) {
 });
 
 // 2 · GST by the supplier's state (6, 8, 10)
+/* Custom PO: the packer took PP1509 off PO-D, the newest order, instead of the
+   oldest. The API's ledger sends those legs and freezes the line at PO-D's price;
+   every paper must then cite PO-D for that line and bill at that price. */
+group("Custom PO", () => {
+const custom = JSON.parse(JSON.stringify(D));
+const inv = custom.invoices[1];
+inv.allocation = "custom";
+const pp = inv.lines.find((l) => l.item_id === "i-pp1509");
+pp.unit_value = 7.25; pp.value_mode = "piece";
+pp.po_alloc = [{ po: "PO-D", boxes: 10 }];
+inv.po_legs["i-pp1509"] = [{ po: "PO-D", date: "2026-04-02", boxes: 10 }];
+const c = ctxOf(custom);
+const row = C.L(c).find((r) => r.it.id === "i-pp1509");
+check("Custom PO", "the line carries the order it was taken off", row.pos.join(",") === "PO-D", row.pos.join(", "));
+check("Custom PO", "the line bills at the price that order agreed", row.valUnit === 7.25, String(row.valUnit));
+check("Custom PO", "its carton serials are not disturbed", row.range === C.L(ctx).find((r) => r.it.id === "i-pp1509").range, row.range);
+["7", "8", "9"].forEach((no) => {
+  const t = text(html(no, c));
+  const m = t.match(/\d+-\d+ (PO-[A-D][ ,PO\-A-D]*?) PP1509/);
+  check("Custom PO", `doc ${no}: PP1509 row lists PO-D only`, m && m[1].replace(/\s/g, "") === "PO-D", m ? m[1] : "row not found");
+  check("Custom PO", `doc ${no}: the banner cites PO-D`, /PO-D/.test(t));
+});
+// The orders the other lines cleared stay as they were.
+check("Custom PO", "another line's order is untouched", C.L(c).find((r) => r.it.id === "i-90441600").pos.join(",") === "PO-A");
+// Nothing is thrown by any paper raised from a Custom PO invoice.
+Object.keys(docs.DOC_META).forEach((no) => {
+  if (docs.isPoDoc?.(no)) return;
+  try { html(no, c); } catch (e) { check("Custom PO", `doc ${no} renders`, false, e.message); }
+});
+check("Custom PO", "every invoice paper renders", true);
+});
+
+group("Transporter", () => {
+const renamed = JSON.parse(JSON.stringify(D));
+const inv = renamed.invoices[1];
+inv.vehicles = { [OSW]: { vehicleNo: "MH04", transportId: "t1", transportName: "OLD NAME", source: "Daman", dest: "Nhava Sheva" } };
+renamed.transports = [{ id: "t1", name: "NEW NAME", transport_id: "27ABC", supplier_id: OSW, supplier_ids: [OSW] }];
+const c = docCtx({ invoice: inv, items: renamed.items, buyers: renamed.buyers, suppliers: renamed.suppliers, poLines: renamed.poLines, transports: renamed.transports, invoices: renamed.invoices });
+check("Transporter", "a renamed transporter prints renamed", C.transportInfo(c, OSW).name === "NEW NAME", C.transportInfo(c, OSW).name);
+renamed.transports = [];
+const gone = docCtx({ invoice: inv, items: renamed.items, buyers: renamed.buyers, suppliers: renamed.suppliers, poLines: renamed.poLines, transports: [], invoices: renamed.invoices });
+check("Transporter", "one since removed from Setup keeps the name on the invoice", C.transportInfo(gone, OSW).name === "OLD NAME", C.transportInfo(gone, OSW).name);
+});
+
 group("GST (6, 8, 10)", () => {
 const h8 = html("8");
 const fig = (label) => Number((h8.match(new RegExp(`>${label.replace(/[()%]/g, "\\$&")}</td>\\s*<td[^>]*data-v="([\\d.]+)"`)) || [])[1]);

@@ -18,7 +18,7 @@ export const VIEWS = [
   { id: "home", to: "/", label: "Dashboard", icon: HomeIcon, title: "Dashboard", crumb: "Overview", desc: "What needs doing today", perm: "home" },
   { id: "orders", to: "/orders", label: "Purchase Orders", icon: ClipboardList, title: "Purchase Orders", crumb: "Step 1", desc: "What the buyer asked for", perm: "orders.entry" },
   { id: "po-reports", to: "/po-reports", label: "PO Reports", icon: FileSpreadsheet, title: "PO Reports", crumb: "Purchase Orders", desc: "Barcode · packing · purchase · sales · suppliers' PO", group: "PO", perm: "orders.reports" },
-  { id: "packing", to: "/packing", label: "Packing — FIFO", icon: PackageCheck, title: "Shipment", crumb: "Step 2", desc: "Pack supplier boxes onto an invoice — FIFO", perm: "shipment.packing" },
+  { id: "packing", to: "/packing", label: "Packing", icon: PackageCheck, title: "Shipment", crumb: "Step 2", desc: "Pack supplier boxes onto an invoice", perm: "shipment.packing" },
   { id: "shipments", to: "/shipments", label: "Shipment details", icon: Ship, title: "Shipment details", crumb: "Shipment", desc: "Invoices, containers, BL", perm: "shipment.details" },
   { id: "supplier-reports", to: "/supplier-reports", label: "Suppliers' Reports", icon: Truck, title: "Suppliers' Reports", crumb: "Shipment", desc: "Packing · purchase · sales · delivery instructions · e-way", group: "SUP", perm: "shipment.reports" },
   { id: "pre-shipment", to: "/pre-shipment", label: "Pre-Shipment Reports", icon: FileText, title: "Pre-Shipment Reports", crumb: "Reports", desc: "Everything customs needs before loading", group: "PRE", perm: "pre-shipment" },

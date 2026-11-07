@@ -27,11 +27,17 @@ def boxes_for(qty, packing) -> int:
 # order of this list. Setup → Additional settings may reorder it; this is the
 # default and the fallback.
 #
+# A supplier none of those ranges belong to (one added under Setup →
+# Suppliers since) is a range of its own, "sup:<supplier id>" — keyed by id so
+# renaming the supplier or changing its code keeps its place and its groups.
+#
 # The same rule is mirrored in frontend/src/lib/sequence.js for the documents
 # the browser lays out; keep the two in step.
 DEFAULT_SEQUENCE = ["Oswin", "VP-PP", "Hansa-PP", "Hansa-GRN", "VP-GRN", "Kiran"]
 
 _KNOWN_RANGES = {k.lower(): k for k in DEFAULT_SEQUENCE}
+
+SUPPLIER_RANGE = "sup:"
 
 # Nominal pipe sizes: the master writes a bore either in millimetres ("15") or
 # in inches ('1/2"', '1-1/4"'), and both have to sort as the same 15, 32 …
@@ -39,17 +45,9 @@ _INCH_TO_MM = {0.5: 15, 0.75: 20, 1.0: 25, 1.25: 32, 1.5: 40, 2.0: 50,
                2.5: 65, 3.0: 80, 4.0: 100}
 
 
-def range_key(item, supplier_code: str = "") -> str:
-    """Which range of the sequence an item belongs to.
-
-    The sheet the row was imported from says it outright; an item added by
-    hand since has no sheet, so its supplier and its sticker rule (GRN = the
-    nylon range) decide instead."""
-    sheet = str(getattr(item, "source_sheet", "") or "").strip().lower()
-    if sheet in _KNOWN_RANGES:
-        return _KNOWN_RANGES[sheet]
-    code = str(supplier_code or "").strip().lower()
-    grn = str(getattr(item, "sticker_rule", "") or "").lower() == "grn"
+def _code_range(code: str, grn: bool = False) -> str:
+    """The known range a supplier code names, or "" for any other supplier."""
+    code = str(code or "").strip().lower()
     if code.startswith("oswin"):
         return "Oswin"
     if code.startswith("vp"):
@@ -59,6 +57,32 @@ def range_key(item, supplier_code: str = "") -> str:
     if code.startswith("kiran"):
         return "Kiran"
     return ""
+
+
+def supplier_ranges(suppliers) -> list[str]:
+    """The ranges of their own the suppliers no known range covers, by name."""
+    own = [s for s in suppliers if getattr(s, "id", None) and not _code_range(getattr(s, "code", ""))]
+    own.sort(key=lambda s: (str(getattr(s, "name", "") or getattr(s, "code", "")).lower(), s.id))
+    return [SUPPLIER_RANGE + s.id for s in own]
+
+
+def range_key(item, supplier="") -> str:
+    """Which range of the sequence an item belongs to.
+
+    The sheet the row was imported from says it outright; an item added by
+    hand since has no sheet, so its supplier and its sticker rule (GRN = the
+    nylon range) decide instead. `supplier` is the Supplier itself (or just
+    its code): one no known range belongs to is a range of its own."""
+    sheet = str(getattr(item, "source_sheet", "") or "").strip().lower()
+    if sheet in _KNOWN_RANGES:
+        return _KNOWN_RANGES[sheet]
+    code = supplier if isinstance(supplier, str) else getattr(supplier, "code", "")
+    grn = str(getattr(item, "sticker_rule", "") or "").lower() == "grn"
+    known = _code_range(code, grn)
+    if known:
+        return known
+    sid = None if isinstance(supplier, str) else getattr(supplier, "id", None)
+    return SUPPLIER_RANGE + sid if sid else ""
 
 
 def _num(text) -> float | None:
@@ -127,9 +151,9 @@ def range_blocks(range_name: str, groups=None) -> list:
     return out
 
 
-def item_block(item, supplier_code: str = "", groups=None) -> dict:
+def item_block(item, supplier="", groups=None) -> dict:
     """Which block of its range an item sits in: {range, at, cat_at, id, name, rest}."""
-    rng = range_key(item, supplier_code)
+    rng = range_key(item, supplier)
     blocks = range_blocks(rng, groups)
     cat = item_category(item)
     at = next((i for i, g in enumerate(blocks)
@@ -143,16 +167,16 @@ def item_block(item, supplier_code: str = "", groups=None) -> dict:
             "id": g.get("id") or str(at), "name": g.get("name") or "", "rest": bool(g.get("rest"))}
 
 
-def item_rank(item, supplier_code: str = "", sequence=None, groups=None) -> tuple:
+def item_rank(item, supplier="", sequence=None, groups=None) -> tuple:
     """Sort key putting an item where the sequence says it goes: its range,
     the block of that range (Setup → Item groups), then the range's own order."""
     seq = [str(x) for x in (sequence or DEFAULT_SEQUENCE)]
-    key = range_key(item, supplier_code)
+    key = range_key(item, supplier)
     try:
         at = [x.lower() for x in seq].index(key.lower()) if key else len(seq)
     except ValueError:
         at = len(seq)
-    blk = item_block(item, supplier_code, groups)
+    blk = item_block(item, supplier, groups)
     gd = str(getattr(item, "gd", "") or getattr(item, "code", "") or "")
     code = str(getattr(item, "code", "") or "")
     if key == "Oswin":
@@ -164,8 +188,8 @@ def item_rank(item, supplier_code: str = "", sequence=None, groups=None) -> tupl
 
 def rank_by(suppliers, sequence=None, groups=None):
     """A sort key over items, given the suppliers they point at."""
-    codes = {s.id: s.code for s in suppliers}
-    return lambda it: item_rank(it, codes.get(getattr(it, "supplier_id", None), ""), sequence, groups)
+    by_id = {s.id: s for s in suppliers}
+    return lambda it: item_rank(it, by_id.get(getattr(it, "supplier_id", None), ""), sequence, groups)
 
 
 # ============================================================================
@@ -594,7 +618,16 @@ def invoice_serials(inv, items_by_id) -> list:
     return out
 
 
-# ---------------- FIFO ledger ----------------
+# ---------------- Allocation ledger ----------------
+# Boxes come off the order book two ways. FIFO: the oldest open order first.
+# Custom PO: the packer names the orders on each line (`InvoiceLine.po_alloc`).
+#
+# Named boxes are given out first, whatever the invoice's date, and FIFO then
+# walks what is left. Nothing else can decide who owns a named box: the save only
+# accepts what the FIFO boxes left free, so taking it first leaves every FIFO
+# invoice's trail as it was; and an invoice back-dated later cannot eat into it.
+# Should a named order no longer have the room (its quantity was cut, it was
+# deleted), the boxes it cannot take fall through to FIFO rather than vanish.
 def compute_ledger(po_lines, invoices, items_by_id) -> dict:
     by_item: dict = {}
     for it_id, it in items_by_id.items():
@@ -626,11 +659,34 @@ def compute_ledger(po_lines, invoices, items_by_id) -> dict:
         return (str(inv.date or ""), inv.created_at or datetime.min,
                 str(inv.invoice_no or ""), str(inv.id or ""))
 
-    receipts = []
-    for inv in sorted(invoices, key=_packed):
+    def _clear(d, invoice_no, take):
+        d["remaining"] -= take
+        d["allocated"] += take
+        d["invoices"].add(invoice_no)
+        # The trail behind `allocated`: which invoice put how many boxes on
+        # this order line. It is what lets a register kept by hand be
+        # reconciled line by line against this one.
+        d["cleared"][invoice_no] = d["cleared"].get(invoice_no, 0) + take
+
+    ordered = sorted(invoices, key=_packed)
+    receipts, pinned_any = [], False
+    for inv in ordered:
         for l in inv.lines:
+            left = int(l.boxes or 0)
+            b = by_item.get(l.item_id)
+            for pin in (getattr(l, "po_alloc", None) or []) if b else []:
+                want = min(int(pin.get("boxes") or 0), left)
+                for d in b["demands"]:
+                    if want <= 0:
+                        break
+                    take = min(d["remaining"], want) if d["po"] == pin.get("po") else 0
+                    if take > 0:
+                        _clear(d, inv.invoice_no, take)
+                        want -= take
+                        left -= take
+                        pinned_any = True
             receipts.append({"invoice_no": inv.invoice_no, "date": inv.date,
-                             "item_id": l.item_id, "boxes": int(l.boxes or 0)})
+                             "item_id": l.item_id, "boxes": left})
     for rc in receipts:
         b = by_item.get(rc["item_id"])
         if not b:
@@ -641,18 +697,19 @@ def compute_ledger(po_lines, invoices, items_by_id) -> dict:
                 break
             take = min(d["remaining"], avail)
             if take > 0:
-                d["remaining"] -= take
+                _clear(d, rc["invoice_no"], take)
                 avail -= take
-                d["allocated"] += take
-                d["invoices"].add(rc["invoice_no"])
-                # The trail behind `allocated`: which invoice put how many boxes
-                # on this order line. It is what lets a register kept by hand
-                # be reconciled line by line against this one.
-                d["cleared"][rc["invoice_no"]] = d["cleared"].get(rc["invoice_no"], 0) + take
         if avail > 0:
             # Packed beyond everything on order for the item. Nothing is
             # invented to absorb it; it is reported, so it can be seen.
             b["excess"].append({"invoice_no": rc["invoice_no"], "date": rc["date"], "boxes": avail})
+    if pinned_any:
+        # Named boxes were given out first; the trail still reads oldest invoice
+        # first, the way the boxes arrived.
+        at = {inv.invoice_no: i for i, inv in reversed(list(enumerate(ordered)))}
+        for b in by_item.values():
+            for d in b["demands"]:
+                d["cleared"] = dict(sorted(d["cleared"].items(), key=lambda kv: at.get(kv[0], 0)))
     return by_item
 
 
@@ -667,6 +724,38 @@ def invoice_po_legs(ledger) -> dict:
             for inv_no, boxes in (d.get("cleared") or {}).items():
                 out.setdefault(inv_no, {}).setdefault(iid, []).append(
                     {"po": d["po"], "date": d["date"], "boxes": boxes})
+    return out
+
+
+def open_by_po(ledger, item_ids=None) -> dict:
+    """Item id → the orders still holding it, oldest first:
+    [{po, date, buyer_id, open}]. An item no order holds has an empty list —
+    so the caller can tell "nothing open" from "not asked about"."""
+    out: dict = {}
+    for iid in (ledger if item_ids is None else item_ids):
+        rows: dict = {}
+        for d in ledger.get(iid, {}).get("demands", []):
+            if d["remaining"] <= 0:
+                continue
+            e = rows.setdefault(d["po"], {"po": d["po"], "date": d["date"],
+                                          "buyer_id": d["buyer_id"], "open": 0})
+            e["open"] += d["remaining"]
+        out[iid] = list(rows.values())
+    return out
+
+
+def pinned_demands(demands, pins) -> list:
+    """An item's open demands cut down to the boxes a Custom PO line names on
+    each, oldest first — what `invoiced_prices` prices that line against."""
+    want: dict = {}
+    for pin in pins or []:
+        want[pin["po"]] = want.get(pin["po"], 0) + int(pin.get("boxes") or 0)
+    out = []
+    for d in demands:
+        take = min(int(d.get("remaining") or 0), want.get(d["po"], 0))
+        if take > 0:
+            want[d["po"]] -= take
+            out.append({**d, "remaining": take})
     return out
 
 

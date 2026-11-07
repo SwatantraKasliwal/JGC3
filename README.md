@@ -158,7 +158,7 @@ two dropdowns:
 
 ```
 Dashboard | Purchase Orders ▾ | Shipment ▾ | Pre-Shipment Reports | Post Shipment Reports | Other Reports | Setup
-             Purchase Orders     Packing — FIFO
+             Purchase Orders     Packing
              PO Reports          Shipment details
                                  Suppliers' Reports
 ```
@@ -210,7 +210,7 @@ holding it can mint a valid login for any account.
 
 ## Data model / flow
 
-Setup masters → Purchase Orders → Packing (invoices, FIFO allocation) →
+Setup masters → Purchase Orders → Packing (invoices, FIFO or chosen-PO allocation) →
 Shipment details (vehicle → container → BL, status lifecycle) → Reports and
 Costing. Business logic (box counts, FIFO balance, dashboard matrix, PO
 roll-up, serials, status, cost working) lives in `backend/app/calc.py` as the

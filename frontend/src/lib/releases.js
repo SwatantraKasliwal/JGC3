@@ -7,6 +7,22 @@
 
 export const RELEASES = [
   {
+    version: "7.4.1",
+    date: "2026-11-07",
+    notes: [
+      "Record packing: beside the booking number, choose FIFO (as before) or Custom PO.",
+      "Custom PO: enter the boxes, then tick which orders they come off — only the orders holding those items are listed. Split an item across orders box by box if you need to.",
+      "Custom PO boxes print on every paper, in the prices those orders agreed, and move the dashboard, the registers and the PO balances the same as FIFO. Edit invoice can change them.",
+      "The menu now says “Packing”.",
+      "Ship to port: every port under Setup → Additional settings is now offered on the shipment — the buyer's own ports first, the rest after them.",
+      "Correcting an entry in Additional settings now follows through to the buyers, items and unshipped invoices that use it. Removing a port takes it off the buyers too. Shipped invoices stay as they went out.",
+      "Correcting a bank account updates the unshipped invoices routed through it; a renamed transporter prints under the new name.",
+      "A supplier added under Setup now appears in Supplier sequence and Item groups straight away.",
+      "Setup kept open in another tab: come back to a screen and it picks up what changed there.",
+      "An invoice number already in use is refused, instead of two invoices sharing each other's orders.",
+    ],
+  },
+  {
     version: "7.4.0",
     date: "2026-11-03",
     notes: [

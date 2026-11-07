@@ -1,6 +1,6 @@
 """Pydantic request/response schemas."""
 from datetime import datetime
-from typing import Optional, Any
+from typing import Literal, Optional, Any
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
@@ -505,10 +505,18 @@ class PurchaseOrderUpdate(BaseModel):
 
 
 # ---------- Invoices ----------
+class PoPin(BaseModel):
+    """Custom PO: this many of a line's boxes come off this purchase order."""
+    po: str
+    boxes: int
+
+
 class InvoiceLineIn(BaseModel):
     item_id: str
     supplier_id: Optional[str] = None
     boxes: int = 0
+    # Custom PO only — ignored on a FIFO invoice.
+    po_alloc: Optional[list[PoPin]] = None
 
 
 class InvoiceLineOut(ORMModel):
@@ -525,6 +533,8 @@ class InvoiceLineOut(ORMModel):
     position: Optional[int] = None
     # The first carton number, allotted once and kept (calc.lock_serials).
     serial_from: Optional[int] = None
+    # Custom PO only: [{po, boxes}] — NULL on a FIFO line.
+    po_alloc: Optional[list[dict[str, Any]]] = None
 
 
 class InvoiceCreate(BaseModel):
@@ -538,6 +548,7 @@ class InvoiceCreate(BaseModel):
     # terms, ports, the bank, the carting date and the booking number. The
     # same `ship` block the shipment details screen edits later.
     ship: dict[str, Any] = Field(default_factory=dict)
+    allocation: Literal["fifo", "custom"] = "fifo"
     lines: list[InvoiceLineIn]
 
 
@@ -551,6 +562,7 @@ class InvoiceUpdate(BaseModel):
     ship: Optional[dict[str, Any]] = None
     step_skip: Optional[dict[str, Any]] = None
     packing_transports: Optional[dict[str, Any]] = None
+    allocation: Optional[Literal["fifo", "custom"]] = None
     lines: Optional[list[InvoiceLineIn]] = None
     # True numbers every line afresh from the serial start, closing the gaps
     # removed lines left. Otherwise allotted carton numbers are kept.
@@ -563,6 +575,13 @@ class AllocationPreviewIn(BaseModel):
     edited, whose own boxes must not count as already delivered."""
     date: str
     lines: list[InvoiceLineIn] = []
+    exclude_invoice_id: Optional[str] = None
+
+
+class OpenOrdersIn(BaseModel):
+    """Which purchase orders still hold these items — what Custom PO offers.
+    `exclude_invoice_id` hands the invoice being edited its own boxes back."""
+    item_ids: list[str] = []
     exclude_invoice_id: Optional[str] = None
 
 
@@ -579,6 +598,7 @@ class InvoiceOut(ORMModel):
     ship: dict[str, Any] = {}
     step_skip: dict[str, Any] = {}
     packing_transports: dict[str, Any] = {}
+    allocation: Optional[str] = "fifo"
     lines: list[InvoiceLineOut] = []
     # Computed
     status: Optional[str] = None

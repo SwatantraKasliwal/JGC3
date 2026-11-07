@@ -140,6 +140,8 @@ export const invoices = {
   serials: (id) => apiGet(`/api/invoices/${id}/serials`),
   // Which orders typed boxes would clear — the real ledger, dated as given.
   allocationPreview: (b) => apiPost("/api/invoices/allocation-preview", b),
+  // Custom PO: the orders still holding these items, oldest first.
+  openOrders: (b) => apiPost("/api/invoices/open-orders", b),
   create: (b) => apiPost("/api/invoices", b),
   update: (id, b) => apiPut(`/api/invoices/${id}`, b),
   remove: (id) => apiDelete(`/api/invoices/${id}`),
@@ -160,7 +162,7 @@ export const dashboard = {
    layout and the item sequence every list is read in. */
 export const options = {
   all: () => apiGet("/api/options"),
-  saveList: (key, values) => apiPut(`/api/options/list/${encodeURIComponent(key)}`, { values }),
+  saveList: (key, values, renames) => apiPut(`/api/options/list/${encodeURIComponent(key)}`, { values, renames: renames || {} }),
   addBank: (b) => apiPost("/api/options/banks", b),
   updateBank: (id, b) => apiPut(`/api/options/banks/${encodeURIComponent(id)}`, b),
   removeBank: (id) => apiDelete(`/api/options/banks/${encodeURIComponent(id)}`),

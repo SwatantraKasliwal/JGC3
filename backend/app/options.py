@@ -10,7 +10,9 @@ and a migration apiece.
 A few more keys sit here for the same reason: the item master's column layout
 (which columns Setup → Items shows, and therefore which item fields the
 reports and downloads carry), the item sequence every list is sorted in, and
-the item groups that split a range into blocks of its own.
+the item groups that split a range into blocks of its own. Those two follow
+the suppliers: one added under Setup → Suppliers joins the sequence as a range
+of its own, and one removed drops out of both.
 
 A list nobody has saved yet is not empty: it is offered pre-filled from the
 values the shipments already use, so the first dropdown anybody opens carries
@@ -71,6 +73,19 @@ def _save(db: Session, key: str, value) -> None:
     db.commit()
 
 
+def _suppliers(db: Session) -> list:
+    """The suppliers, read once per request: the sequence, the groups and the
+    sort key all need them."""
+    if "option_suppliers" not in db.info:
+        db.info["option_suppliers"] = db.query(models.Supplier).all()
+    return db.info["option_suppliers"]
+
+
+def _ranges(db: Session) -> list[str]:
+    """Every range there is: the known ones, then each supplier's own."""
+    return list(calc.DEFAULT_SEQUENCE) + calc.supplier_ranges(_suppliers(db))
+
+
 def _sources(db: Session) -> tuple:
     """The invoices and buyers the unsaved lists are pre-filled from — read
     once for all of them rather than once a list."""
@@ -98,8 +113,7 @@ def clean_list(values) -> list[str]:
 def _in_use(db: Session, key: str) -> list[str]:
     """The values already typed on shipments (and buyers / items), for a list
     that has never been saved."""
-    ship_field = {"terms_delivery": "terms", "terms_payment": "payment",
-                  "ports_loading": "pol", "ports_ship_to": "pod"}.get(key)
+    ship_field = SHIP_FIELDS.get(key)
     found: list[str] = []
     invoices, buyers = _sources(db) if ship_field else ([], [])
     for inv in invoices:
@@ -123,8 +137,58 @@ def get_list(db: Session, key: str) -> list[str]:
     return clean_list(fallback + _in_use(db, key))
 
 
-def save_list(db: Session, key: str, values) -> list[str]:
+# The field of an invoice's `ship` block each list fills in.
+SHIP_FIELDS = {"terms_delivery": "terms", "terms_payment": "payment",
+               "ports_loading": "pol", "ports_ship_to": "pod"}
+
+
+def _open_invoices(db: Session) -> list:
+    """The invoices whose papers may still change. A shipped one is history:
+    its customs and bank documents went out with what they say now."""
+    return [i for i in db.query(models.Invoice).all() if calc.invoice_status(i) != "Shipped"]
+
+
+def _carry(db: Session, key: str, before: list[str], kept: list[str], renames: dict) -> None:
+    """A list entry is copied onto what picked it, so correcting or removing it
+    has to reach those copies — or the buyer keeps offering a port that is gone
+    and the open invoice shows its term as "not on the list".
+
+    A renamed entry follows onto buyers, items and open invoices. A removed port
+    comes off the buyers it was on. What an invoice already picked is left when
+    an entry is merely removed — the form still shows it and saves it."""
+    now = {v.lower() for v in kept}
+    renamed = {str(a).lower(): str(b) for a, b in (renames or {}).items()
+               if a and b and str(b).lower() in now and str(a) != str(b)}
+    gone = {v.lower() for v in before} - now - set(renamed)
+    if not renamed and not gone:
+        return
+    if key == "ports_ship_to":
+        for b in db.query(models.Buyer).all():
+            ports = clean_list(renamed.get(p.lower(), p) for p in (b.ports or []) if p.lower() not in gone)
+            ship_to = str(b.ship_to or "")
+            if ship_to.lower() in renamed:
+                ship_to = renamed[ship_to.lower()]
+            elif ship_to.lower() in gone and ports:
+                ship_to = ports[0]
+            if ports != list(b.ports or []) or ship_to != (b.ship_to or ""):
+                b.ports, b.ship_to = ports, ship_to
+    if key == "packaging_types" and renamed:
+        for it in db.query(models.Item).filter(models.Item.packaging_type.isnot(None)).all():
+            new = renamed.get(str(it.packaging_type).lower())
+            if new:
+                it.packaging_type = new
+    field = SHIP_FIELDS.get(key)
+    if field and renamed:
+        for inv in _open_invoices(db):
+            new = renamed.get(str((inv.ship or {}).get(field) or "").lower())
+            if new:
+                inv.ship = {**inv.ship, field: new}
+
+
+def save_list(db: Session, key: str, values, renames: dict | None = None) -> list[str]:
+    before = get_list(db, key)
     kept = clean_list(values)
+    _carry(db, key, before, kept, renames or {})
     _save(db, key, {"values": kept})
     return kept
 
@@ -139,6 +203,27 @@ def get_banks(db: Session) -> list[dict]:
 def save_banks(db: Session, banks: list[dict]) -> list[dict]:
     _save(db, BANKS_KEY, {"banks": banks})
     return banks
+
+
+def bank_lines(b: dict) -> dict:
+    """What a bank account prints as on the papers. Mirrors `bankLines` in
+    frontend/src/features/shipments/ShipTermsFields.jsx — keep the two in step."""
+    branch = str(b.get("branch") or "").strip()
+    name = str(b.get("bank_name") or "").strip()
+    tail = "" if re.search(r"branch$", branch, re.I) else " BRANCH"
+    bank = f"{name}, {branch}{tail}" if branch else name
+    town = re.sub(r"\s*branch$", "", branch, flags=re.I)
+    where = ", ".join(x for x in (town, str(b.get("city") or "").strip(), str(b.get("state") or "").strip()) if x)
+    return {"bank": bank, "bankAddr": f"{where} (INDIA)" if where else "",
+            "bankAccount": b.get("account_no") or "", "bankIfsc": b.get("ifsc") or ""}
+
+
+def carry_bank(db: Session, bank: dict) -> None:
+    """A corrected account reaches the open invoices routed through it — they
+    hold a copy of its printed lines. Shipped invoices keep what they went out with."""
+    for inv in _open_invoices(db):
+        if (inv.ship or {}).get("bankId") == bank["id"]:
+            inv.ship = {**inv.ship, **bank_lines(bank)}
 
 
 # ---------- the item master's column layout ----------
@@ -182,17 +267,24 @@ def save_doc_columns(db: Session, rules: list[dict]) -> dict:
 
 # ---------- the item sequence ----------
 
+def _kept_ranges(db: Session, values) -> list[str]:
+    """`values` cut down to ranges that exist, in their own spelling — a
+    removed supplier's range drops out."""
+    known = {k.lower(): k for k in _ranges(db)}
+    return [known[v.lower()] for v in clean_list(values) if v.lower() in known]
+
+
 def get_sequence(db: Session) -> list[str]:
     row = _row(db, SEQUENCE_KEY)
-    saved = clean_list((row.value or {}).get("values", [])) if row else []
-    # Every known range keeps a place even if a saved order predates it.
-    return saved + [k for k in calc.DEFAULT_SEQUENCE if k.lower() not in {s.lower() for s in saved}]
+    saved = _kept_ranges(db, (row.value or {}).get("values", [])) if row else []
+    # Every range keeps a place even if a saved order predates it: a known
+    # range, or a supplier added since, joins at the end.
+    have = {s.lower() for s in saved}
+    return saved + [k for k in _ranges(db) if k.lower() not in have]
 
 
 def save_sequence(db: Session, values) -> list[str]:
-    known = {k.lower(): k for k in calc.DEFAULT_SEQUENCE}
-    kept = [known[v.lower()] for v in clean_list(values) if v.lower() in known]
-    _save(db, SEQUENCE_KEY, {"values": kept})
+    _save(db, SEQUENCE_KEY, {"values": _kept_ranges(db, values)})
     return get_sequence(db)
 
 
@@ -208,13 +300,14 @@ def get_groups(db: Session) -> dict:
     row = _row(db, GROUPS_KEY)
     if row is None:
         return {k: [dict(g) for g in v] for k, v in calc.DEFAULT_GROUPS.items()}
-    return dict((row.value or {}).get("ranges") or {})
+    live = {k.lower() for k in _ranges(db)}
+    return {k: v for k, v in ((row.value or {}).get("ranges") or {}).items() if str(k).lower() in live}
 
 
-def clean_groups(value) -> dict:
+def clean_groups(value, ranges=None) -> dict:
     """Ranges the sequence knows, categories as capital letters, a category in
     one group of its range only, and exactly one "rest" block per range."""
-    known = {k.lower(): k for k in calc.DEFAULT_SEQUENCE}
+    known = {k.lower(): k for k in (ranges or calc.DEFAULT_SEQUENCE)}
     out: dict = {}
     for rng, groups in (value or {}).items():
         name = known.get(str(rng or "").strip().lower())
@@ -254,10 +347,10 @@ def clean_groups(value) -> dict:
 
 
 def save_groups(db: Session, value) -> dict:
-    _save(db, GROUPS_KEY, {"ranges": clean_groups(value)})
+    _save(db, GROUPS_KEY, {"ranges": clean_groups(value, _ranges(db))})
     return get_groups(db)
 
 
 def item_rank(db: Session):
     """The sort key every list of items is put in order with."""
-    return calc.rank_by(db.query(models.Supplier).all(), get_sequence(db), get_groups(db))
+    return calc.rank_by(_suppliers(db), get_sequence(db), get_groups(db))

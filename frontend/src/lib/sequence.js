@@ -5,6 +5,10 @@
    both kinds, so it is the range that decides an item's place, not the
    supplier. A range the list does not name follows them.
 
+   A supplier none of those ranges belong to (one added under Setup →
+   Suppliers since) is a range of its own, "sup:<supplier id>" — keyed by id
+   so renaming the supplier or changing its code keeps its place and groups.
+
    Inside a range, Setup → Item groups may split the goods into blocks that
    each print as a table of their own (Oswin's PMF pipes, by default).
 
@@ -15,6 +19,9 @@
 export const DEFAULT_SEQUENCE = ["Oswin", "VP-PP", "Hansa-PP", "Hansa-GRN", "VP-GRN", "Kiran"];
 
 const KNOWN = Object.fromEntries(DEFAULT_SEQUENCE.map((k) => [k.toLowerCase(), k]));
+
+export const SUPPLIER_RANGE = "sup:";
+export const isSupplierRange = (k) => String(k || "").startsWith(SUPPLIER_RANGE);
 
 /* What each range is called on screen. */
 export const RANGE_LABEL = {
@@ -32,16 +39,62 @@ const INCH_TO_MM = { 0.5: 15, 0.75: 20, 1: 25, 1.25: 32, 1.5: 40, 2: 50, 2.5: 65
    or the document engine's (sourceSheet, stickerRule). */
 const pick = (it, a, b) => (it?.[a] ?? it?.[b] ?? "");
 
-export function rangeKey(it, supplierCode = "") {
-  const sheet = String(pick(it, "source_sheet", "sourceSheet")).trim().toLowerCase();
-  if (KNOWN[sheet]) return KNOWN[sheet];
+/* The known range a supplier code names, or "" for any other supplier. */
+function codeRange(supplierCode, grn = false) {
   const code = String(supplierCode || "").trim().toLowerCase();
-  const grn = String(pick(it, "sticker_rule", "stickerRule")).toLowerCase() === "grn";
   if (code.startsWith("oswin")) return "Oswin";
   if (code.startsWith("vp")) return grn ? "VP-GRN" : "VP-PP";
   if (code.startsWith("hansa")) return grn ? "Hansa-GRN" : "Hansa-PP";
   if (code.startsWith("kiran")) return "Kiran";
   return "";
+}
+
+/* `supplier` is the supplier itself (or just its code): one no known range
+   belongs to is a range of its own. */
+export function rangeKey(it, supplier = "") {
+  const sheet = String(pick(it, "source_sheet", "sourceSheet")).trim().toLowerCase();
+  if (KNOWN[sheet]) return KNOWN[sheet];
+  const grn = String(pick(it, "sticker_rule", "stickerRule")).toLowerCase() === "grn";
+  const known = codeRange(typeof supplier === "string" ? supplier : supplier?.code, grn);
+  if (known) return known;
+  return typeof supplier === "object" && supplier?.id ? SUPPLIER_RANGE + supplier.id : "";
+}
+
+/* The ranges of their own the suppliers no known range covers, by name.
+   Mirrors calc.supplier_ranges. */
+export function supplierRanges(suppliers = []) {
+  return (suppliers || [])
+    .filter((x) => x?.id && !codeRange(x.code))
+    .map((x) => [String(x.name || x.code || "").toLowerCase(), x.id])
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0))
+    .map(([, id]) => SUPPLIER_RANGE + id);
+}
+
+/* The sequence as it stands: the saved order, less ranges whose supplier is
+   gone, then any range it does not name yet — a known one, or a supplier
+   added since. What options.get_sequence returns, worked out again here so
+   a supplier added a moment ago shows before the settings are read again. */
+export function fullSequence(saved = [], suppliers = []) {
+  const all = [...DEFAULT_SEQUENCE, ...supplierRanges(suppliers)];
+  const live = Object.fromEntries(all.map((k) => [k.toLowerCase(), k]));
+  const kept = [...new Set((saved || []).map((k) => live[String(k).toLowerCase()]).filter(Boolean))];
+  const have = new Set(kept.map((k) => k.toLowerCase()));
+  return [...kept, ...all.filter((k) => !have.has(k.toLowerCase()))];
+}
+
+const supplierOfRange = (range, suppliers = []) =>
+  isSupplierRange(range) ? (suppliers || []).find((x) => x?.id === range.slice(SUPPLIER_RANGE.length)) : null;
+
+/* What a range is called on screen, and the short name its block headings
+   start with — a supplier's own range by the supplier's name. */
+export function rangeLabel(range, suppliers = []) {
+  const sup = supplierOfRange(range, suppliers);
+  return RANGE_LABEL[range] || (sup ? sup.name || sup.code : isSupplierRange(range) ? "Removed supplier" : range);
+}
+
+export function rangeShort(range, suppliers = []) {
+  const sup = supplierOfRange(range, suppliers);
+  return RANGE_SHORT[range] || (sup ? sup.name || sup.code : range) || "Other";
 }
 
 /* The bore in millimetres: "15", '1/2"', '1-1/4"', or the "15 MM (1/2")" the
@@ -96,15 +149,15 @@ export function rangeBlocks(range, groups = DEFAULT_GROUPS) {
 
 /* Which block of its range an item sits in. `label` is what a heading prints:
    the range for its rest block, "Oswin · PMF" for a named group. */
-export function itemBlock(it, supplierCode = "", groups = DEFAULT_GROUPS) {
-  const range = rangeKey(it, supplierCode);
+export function itemBlock(it, supplier = "", groups = DEFAULT_GROUPS) {
+  const range = rangeKey(it, supplier);
   const blocks = rangeBlocks(range, groups);
   const cat = itemCategory(it);
   let at = blocks.findIndex((g) => !g.rest && cat && g.cats.includes(cat));
   if (at < 0) at = blocks.findIndex((g) => g.rest);
   const g = blocks[at];
   const listed = !g.rest && (g.sort || "listed") === "listed";
-  const short = RANGE_SHORT[range] || range || "Other";
+  const short = rangeShort(range, typeof supplier === "object" && supplier ? [supplier] : []);
   return {
     range, at, catAt: listed && g.cats.includes(cat) ? g.cats.indexOf(cat) : 0,
     key: `${range}#${g.id || at}`, name: g.name || "", rest: !!g.rest,
@@ -114,12 +167,12 @@ export function itemBlock(it, supplierCode = "", groups = DEFAULT_GROUPS) {
 
 /* A sort key: [range place, block, category in block, bore, group, length,
    GD code, code]. */
-export function itemRank(it, supplierCode = "", sequence = DEFAULT_SEQUENCE, groups = DEFAULT_GROUPS) {
+export function itemRank(it, supplier = "", sequence = DEFAULT_SEQUENCE, groups = DEFAULT_GROUPS) {
   const seq = (sequence?.length ? sequence : DEFAULT_SEQUENCE).map((s) => String(s).toLowerCase());
-  const key = rangeKey(it, supplierCode);
+  const key = rangeKey(it, supplier);
   const found = key ? seq.indexOf(key.toLowerCase()) : -1;
   const at = found < 0 ? seq.length : found;
-  const blk = itemBlock(it, supplierCode, groups);
+  const blk = itemBlock(it, supplier, groups);
   const gd = String(it?.gd || it?.code || "");
   const code = String(it?.code || "");
   if (key === "Oswin") {
@@ -143,11 +196,11 @@ const cmpKey = (a, b) => {
    it sort anything that carries an item (a line, a row) rather than the item
    itself. Stable: equal items keep the order they came in. */
 export function bySequence({ suppliers = [], sequence, groups, getItem = (x) => x, supplierOf } = {}) {
-  const codeOf = Object.fromEntries((suppliers || []).map((s) => [s.id, s.code]));
+  const supOf = Object.fromEntries((suppliers || []).map((s) => [s.id, s]));
   const keyOf = (x) => {
     const it = getItem(x) || {};
     const sid = supplierOf ? supplierOf(x) : (it.supplier_id ?? it.supplierId);
-    return itemRank(it, codeOf[sid] || "", sequence, groups || DEFAULT_GROUPS);
+    return itemRank(it, supOf[sid] || "", sequence, groups || DEFAULT_GROUPS);
   };
   return (a, b) => cmpKey(keyOf(a), keyOf(b));
 }
@@ -155,11 +208,11 @@ export function bySequence({ suppliers = [], sequence, groups, getItem = (x) => 
 /* A function naming the block anything that carries an item sits in, for the
    headings a list is broken up by. Same arguments as bySequence. */
 export function blockOf({ suppliers = [], groups, getItem = (x) => x, supplierOf } = {}) {
-  const codeOf = Object.fromEntries((suppliers || []).map((s) => [s.id, s.code]));
+  const supOf = Object.fromEntries((suppliers || []).map((s) => [s.id, s]));
   return (x) => {
     const it = getItem(x) || {};
     const sid = supplierOf ? supplierOf(x) : (it.supplier_id ?? it.supplierId);
-    return itemBlock(it, codeOf[sid] || "", groups || DEFAULT_GROUPS);
+    return itemBlock(it, supOf[sid] || "", groups || DEFAULT_GROUPS);
   };
 }
 

@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ def _out(inv: models.Invoice, legs: dict | None = None) -> schemas.InvoiceOut:
     out = schemas.InvoiceOut.model_validate(inv)
     out.status = calc.invoice_status(inv)
     out.serial_next = calc.serial_next_of(inv)
+    out.allocation = inv.allocation or "fifo"
     if legs is not None:
         out.po_legs = legs.get(inv.invoice_no, {})
     return out
@@ -80,9 +82,12 @@ def _freeze_prices(db: Session, lines, keep=None, exclude_invoice_id=None) -> li
         it = items.get(l.item_id)
         if not it:
             raise HTTPException(404, f"Item {l.item_id} not found")
-        p = keep.get(l.item_id) or calc.invoiced_prices(it, l.boxes, open_demands.get(l.item_id, []))
+        pins = getattr(l, "po_alloc", None)
+        demands = open_demands.get(l.item_id, [])
+        # Named boxes are priced at what the orders they were named on agreed.
+        p = keep.get(l.item_id) or calc.invoiced_prices(it, l.boxes, calc.pinned_demands(demands, pins) if pins else demands)
         out.append(models.InvoiceLine(
-            item_id=l.item_id, supplier_id=l.supplier_id, boxes=l.boxes,
+            item_id=l.item_id, supplier_id=l.supplier_id, boxes=l.boxes, po_alloc=pins or None,
             unit_value=p["unit_value"], value_mode=p["value_mode"],
             unit_fob100=p["unit_fob100"], fob_mode=p["fob_mode"],
             # Carton serials run down the lines in this order.
@@ -99,7 +104,7 @@ def _in_sequence(db: Session, lines) -> list:
     keep their place at the end; the price freeze reports them."""
     items = {i.id: i for i in db.query(models.Item).all()}
     rank = options.item_rank(db)
-    last = (len(calc.DEFAULT_SEQUENCE) + 99,)
+    last = (math.inf,)
     return sorted(lines, key=lambda l: rank(items[l.item_id]) if l.item_id in items else last)
 
 
@@ -108,6 +113,66 @@ def _line_label(db: Session, line) -> str:
     it = db.get(models.Item, line.item_id)
     name = (it.gd or it.code) if it else "a line"
     return f"{name} ({line.serial_from}–{line.serial_from + int(line.boxes or 0) - 1})"
+
+
+def _merged(pins) -> list[dict]:
+    """[{po, boxes}] with one entry per order and nothing empty, however it was
+    sent — `pins` may be schema objects or plain dicts."""
+    boxes: dict = {}
+    for pin in pins or []:
+        po, n = (pin["po"], pin.get("boxes")) if isinstance(pin, dict) else (pin.po, pin.boxes)
+        if int(n or 0) > 0:
+            boxes[po] = boxes.get(po, 0) + int(n)
+    return [{"po": po, "boxes": n} for po, n in boxes.items()]
+
+
+def _trimmed(pins, boxes: int) -> list[dict]:
+    """A line's named boxes after its count was cut: taken off the last order."""
+    kept, left = [], max(0, int(boxes or 0))
+    for pin in _merged(pins):
+        n = min(pin["boxes"], left)
+        if n:
+            kept.append({"po": pin["po"], "boxes": n})
+            left -= n
+    return kept
+
+
+def _resolve_allocation(db: Session, mode: str, lines, exclude_invoice_id=None) -> list:
+    """Each line's `po_alloc` as it will be stored, refused if it cannot be met.
+
+    A FIFO invoice names nothing. A Custom PO invoice must place every box the
+    order book has room for: each named order must hold the item and have the
+    boxes free once every other invoice has taken its own. Boxes beyond what any
+    order still holds are the one thing left unplaced — the ledger reports them
+    as excess, the same as on a FIFO invoice."""
+    out = [SimpleNamespace(item_id=l.item_id, supplier_id=l.supplier_id, boxes=l.boxes,
+                           po_alloc=_merged(getattr(l, "po_alloc", None)) if mode == "custom" else None)
+           for l in lines]
+    if mode != "custom":
+        return out
+    items = {i.id: i for i in db.query(models.Item).all()}
+    invoices = [i for i in db.query(models.Invoice).all() if i.id != exclude_invoice_id]
+    ledger = calc.compute_ledger(db.query(models.PurchaseOrderLine).all(), invoices, items)
+    held = calc.open_by_po(ledger, [l.item_id for l in out])
+    for l in out:
+        it = items.get(l.item_id)
+        if not it:
+            raise HTTPException(404, f"Item {l.item_id} not found")
+        name = it.gd or it.code
+        boxes = max(0, int(l.boxes or 0))
+        room = {r["po"]: r["open"] for r in held.get(l.item_id, [])}
+        placed = sum(p["boxes"] for p in l.po_alloc)
+        if placed > boxes:
+            raise HTTPException(400, f"{name}: {placed} boxes are placed on purchase orders but only {boxes} were packed.")
+        for pin in l.po_alloc:
+            if pin["po"] not in room:
+                raise HTTPException(409, f"PO {pin['po']} has no {name} left to deduct.")
+            if pin["boxes"] > room[pin["po"]]:
+                raise HTTPException(409, f"PO {pin['po']} has only {room[pin['po']]} boxes of {name} left — {pin['boxes']} were asked of it.")
+        short = min(boxes, sum(room.values())) - placed
+        if short > 0:
+            raise HTTPException(400, f"{name}: {short} more box{'' if short == 1 else 'es'} need a purchase order.")
+    return out
 
 
 # The key a preview's boxes are booked under in the ledger — never a real
@@ -129,7 +194,8 @@ def allocation_preview(body: schemas.AllocationPreviewIn, db: Session = Depends(
     invoices = [i for i in db.query(models.Invoice).all() if i.id != body.exclude_invoice_id]
     draft = SimpleNamespace(
         id=_PREVIEW, invoice_no=_PREVIEW, date=body.date, created_at=datetime.utcnow(),
-        lines=[SimpleNamespace(item_id=l.item_id, supplier_id=l.supplier_id, boxes=l.boxes)
+        lines=[SimpleNamespace(item_id=l.item_id, supplier_id=l.supplier_id, boxes=l.boxes,
+                               po_alloc=_merged(l.po_alloc) or None)
                for l in body.lines if l.boxes and l.item_id in items],
     )
     ledger = calc.compute_ledger(db.query(models.PurchaseOrderLine).all(), invoices + [draft], items)
@@ -146,15 +212,38 @@ def allocation_preview(body: schemas.AllocationPreviewIn, db: Session = Depends(
     return out
 
 
+@router.post("/open-orders", dependencies=[Depends(_write)])
+def open_orders(body: schemas.OpenOrdersIn, db: Session = Depends(get_db)):
+    """The purchase orders still holding these items, oldest first — what
+    Custom PO lists. Every item asked about comes back, with an empty list if
+    no order holds it."""
+    items = {i.id: i for i in db.query(models.Item).all()}
+    invoices = [i for i in db.query(models.Invoice).all() if i.id != body.exclude_invoice_id]
+    ledger = calc.compute_ledger(db.query(models.PurchaseOrderLine).all(), invoices, items)
+    return calc.open_by_po(ledger, body.item_ids)
+
+
+def _no_duplicate(db: Session, invoice_no: str, except_id=None) -> None:
+    """The ledger files every box under the invoice's number, so two invoices
+    sharing one would print each other's purchase orders."""
+    q = db.query(models.Invoice.id).filter(models.Invoice.invoice_no == invoice_no)
+    if except_id:
+        q = q.filter(models.Invoice.id != except_id)
+    if q.first():
+        raise HTTPException(409, f"Invoice {invoice_no} already exists — use another number.")
+
+
 @router.post("", response_model=schemas.InvoiceOut, status_code=201, dependencies=[Depends(_write)])
 def create_invoice(body: schemas.InvoiceCreate, db: Session = Depends(get_db)):
+    _no_duplicate(db, body.invoice_no)
     inv = models.Invoice(
         invoice_no=body.invoice_no, date=body.date, buyer_id=body.buyer_id,
         rbi=body.rbi, serial_start=body.serial_start,
         packing_transports=body.packing_transports or {},
         vehicles={}, ship=dict(body.ship or {}), step_skip={},
+        allocation=body.allocation,
     )
-    inv.lines = _freeze_prices(db, _in_sequence(db, body.lines))
+    inv.lines = _freeze_prices(db, _resolve_allocation(db, body.allocation, _in_sequence(db, body.lines)))
     # Carton numbers are allotted now, down the lines in sequence, and kept.
     inv.serial_next = calc.allot_serials(inv.lines, calc.serial_base(inv))
     db.add(inv)
@@ -171,6 +260,13 @@ def update_invoice(iid: str, body: schemas.InvoiceUpdate, db: Session = Depends(
     data = body.model_dump(exclude_unset=True)
     lines = data.pop("lines", None)
     renumber = bool(data.pop("renumber", None))
+    if data.get("invoice_no") and data["invoice_no"] != inv.invoice_no:
+        _no_duplicate(db, data["invoice_no"], except_id=inv.id)
+    if data.get("allocation") is None:
+        data.pop("allocation", None)
+    # A change of mode with no lines sent restates the lines already there.
+    if lines is None and data.get("allocation", inv.allocation or "fifo") != (inv.allocation or "fifo"):
+        lines = [{"item_id": l.item_id, "supplier_id": l.supplier_id, "boxes": l.boxes} for l in inv.lines]
     # The carton numbers every line holds now, and the start they hang off.
     old_base = calc.serial_base(inv)
     old_next = calc.serial_next_of(inv)
@@ -188,19 +284,37 @@ def update_invoice(iid: str, body: schemas.InvoiceUpdate, db: Session = Depends(
                 l.serial_from = held[l.item_id] + shift
             inv.serial_next = old_next + shift
     if lines is not None:
-        # An item already on this invoice keeps the price it was raised at.
+        # Kept in the order the editor sent them: an existing invoice's lines
+        # stay where its cartons were numbered, and the edit form slots any
+        # line it adds into its place in the item sequence. A line that does
+        # not say which orders it comes off keeps the ones it had.
+        had = {l.item_id: l.po_alloc for l in inv.lines}
+        mode = inv.allocation or "fifo"
+        incoming = _resolve_allocation(db, mode, [
+            SimpleNamespace(item_id=l["item_id"], supplier_id=l.get("supplier_id"), boxes=l.get("boxes", 0),
+                            po_alloc=l["po_alloc"] if l.get("po_alloc") is not None
+                            else _trimmed(had.get(l["item_id"]), l.get("boxes", 0)))
+            for l in lines
+        ], exclude_invoice_id=inv.id)
+        now = {l.item_id: l.po_alloc for l in incoming}
+
+        def same_orders(a, b) -> bool:
+            # The same single order is the same price however many boxes it
+            # gives; a mix is only the same mix if the split has not moved.
+            a, b = _merged(a), _merged(b)
+            if {p["po"] for p in a} != {p["po"] for p in b}:
+                return False
+            return len(a) <= 1 or {p["po"]: p["boxes"] for p in a} == {p["po"]: p["boxes"] for p in b}
+
+        # An item already on this invoice keeps the price it was raised at —
+        # unless its boxes were moved to other orders, which agreed their own.
         keep = {
             l.item_id: {
                 "unit_value": l.unit_value, "value_mode": l.value_mode,
                 "unit_fob100": l.unit_fob100, "fob_mode": l.fob_mode,
             }
-            for l in inv.lines if l.unit_value is not None
+            for l in inv.lines if l.unit_value is not None and same_orders(had.get(l.item_id), now.get(l.item_id))
         }
-        # Kept in the order the editor sent them: an existing invoice's lines
-        # stay where its cartons were numbered, and the edit form slots any
-        # line it adds into its place in the item sequence.
-        incoming = [SimpleNamespace(item_id=l["item_id"], supplier_id=l.get("supplier_id"),
-                                    boxes=l.get("boxes", 0)) for l in lines]
         new_lines = _freeze_prices(db, incoming, keep=keep, exclude_invoice_id=inv.id)
         # Carton numbers already allotted stay with their line; a removed
         # line's numbers are left unused, and a line new to the invoice takes

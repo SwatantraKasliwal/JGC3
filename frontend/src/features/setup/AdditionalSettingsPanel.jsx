@@ -9,7 +9,7 @@ import {
 import { useOptions, useOptionMutations, useItems, useSuppliers } from "../../api/hooks.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
 import {
-  DEFAULT_SEQUENCE, RANGE_LABEL, RANGE_SHORT, DEFAULT_GROUPS, rangeBlocks, rangeKey, itemCategory,
+  DEFAULT_GROUPS, rangeBlocks, rangeKey, itemCategory, fullSequence, rangeLabel, rangeShort,
 } from "../../lib/sequence.js";
 
 /* Setup → Additional settings.
@@ -25,7 +25,7 @@ import {
 
 const LISTS = [
   { key: "terms_delivery", title: "Terms of delivery", icon: Truck, eg: "e.g. FOB MUMBAI",
-    hint: "Offered on the shipment details and on record packing." },
+    hint: "Offered on the shipment details and on record packing. A corrected entry follows onto unshipped invoices." },
   { key: "packaging_types", title: "Packaging types", icon: Package, eg: "e.g. Bundles",
     hint: "What an item travels in — picked on each item. Every existing item is in Cartons." },
   { key: "terms_payment", title: "Terms of payment", icon: Wallet, eg: "e.g. D.P.SIGHT DRAFT",
@@ -33,7 +33,7 @@ const LISTS = [
   { key: "ports_loading", title: "Port of loading", icon: Anchor, eg: "e.g. NHAVA SHEVA-MUMBAI (INDIA)",
     hint: "Where the container is loaded." },
   { key: "ports_ship_to", title: "Ship to port", icon: MapPin, eg: "e.g. FREMANTLE",
-    hint: "The ports buyers take delivery at — a buyer is given theirs under Buyers." },
+    hint: "Offered on every shipment — a buyer's own ports (Setup → Buyers) come first. Removing one takes it off the buyers too." },
 ];
 
 /* One list: the box that adds to it, and the entries under it. */
@@ -47,7 +47,7 @@ function ListCard({ cfg, values, save, busy }) {
 
   const has = (text, except = -1) => values.some((v, i) => i !== except && v.toLowerCase() === text.toLowerCase());
 
-  const commit = (next, done) => save(next, {
+  const commit = (next, done, renames) => save(next, renames, {
     onSuccess: () => { setErr(""); done?.(); },
     onError: (e) => setErr(e.message),
   });
@@ -62,7 +62,8 @@ function ListCard({ cfg, values, save, busy }) {
     const text = editText.trim().replace(/\s+/g, " ");
     if (!text) return;
     if (has(text, i)) { setErr(`“${text}” is already on the list.`); return; }
-    commit(values.map((v, j) => (j === i ? text : v)), () => { setEditAt(-1); toast(`${cfg.title} updated`); });
+    // Named as a rename, so what already picked the old spelling can follow it.
+    commit(values.map((v, j) => (j === i ? text : v)), () => { setEditAt(-1); toast(`${cfg.title} updated`); }, { [values[i]]: text });
   };
   const remove = (i) => commit(values.filter((_, j) => j !== i), () => { setAskAt(-1); toast(`${cfg.title}: “${values[i]}” removed`); });
 
@@ -248,7 +249,7 @@ function BanksCard({ banks, m }) {
 
 /* ---------------- the item sequence ---------------- */
 
-function SequenceCard({ sequence, m }) {
+function SequenceCard({ sequence, defaults, suppliers, counts, m }) {
   const toast = useToast();
   const [list, setList] = useState(sequence);
   useEffect(() => setList(sequence), [sequence.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -262,12 +263,16 @@ function SequenceCard({ sequence, m }) {
         <div className="opt-hint">
           The order items are listed in on every report and download when “All suppliers” is chosen,
           and the order record packing numbers cartons in. Oswin sorts by bore — 15 MM, 20 MM, 25 MM …
+          A supplier added under Suppliers joins the end.
         </div>
         <ol className="seq-list">
           {list.map((k, i) => (
             <li key={k} className="seq-item">
               <span className="seq-n">{i + 1}</span>
-              <span className="opt-text">{RANGE_LABEL[k] || k}</span>
+              <span className="opt-text">
+                {rangeLabel(k, suppliers)}
+                {counts && !counts[k] && <span className="grp-sub"> · No items</span>}
+              </span>
               <button type="button" className="icon-btn bare" title="Move up" disabled={i === 0} onClick={() => swap(i, i - 1)}><ArrowUp size={14} /></button>
               <button type="button" className="icon-btn bare" title="Move down" disabled={i === list.length - 1} onClick={() => swap(i, i + 1)}><ArrowDown size={14} /></button>
             </li>
@@ -276,8 +281,8 @@ function SequenceCard({ sequence, m }) {
         <div className="row wrap" style={{ gap: 8 }}>
           <Btn size="sm" icon={Check} disabled={!dirty || m.saveSequence.isPending}
             onClick={() => m.saveSequence.mutate(list, { onSuccess: () => toast("Supplier sequence saved") })}>Save order</Btn>
-          <Btn size="sm" variant="ghost" icon={RotateCcw} disabled={list.join("|") === DEFAULT_SEQUENCE.join("|")}
-            onClick={() => setList(DEFAULT_SEQUENCE)}>Default order</Btn>
+          <Btn size="sm" variant="ghost" icon={RotateCcw} disabled={list.join("|") === defaults.join("|")}
+            onClick={() => setList(defaults)}>Default order</Btn>
         </div>
       </div>
     </Card>
@@ -378,39 +383,43 @@ function GroupBlock({ g, i, count, cats, free, onChange, onMove, onRemove }) {
   );
 }
 
-/* { range: [{ cat, count, sample }] } — the categories the item master holds
-   in each range, worked out here from the items the browser already has
-   rather than asked of the server on every settings read. */
-function useCategories() {
+/* { categories: { range: [{ cat, count, sample }] }, counts: { range: items } }
+   — the categories the item master holds in each range, and how many items
+   each range has, worked out here from the items the browser already has
+   rather than asked of the server on every settings read. `counts` is null
+   until the items are in, so no range reads "No items" while they load. */
+function useCategories(suppliers) {
   const items = useItems().data;
-  const suppliers = useSuppliers().data;
   return useMemo(() => {
-    const codeOf = Object.fromEntries((suppliers || []).map((x) => [x.id, x.code]));
+    const supOf = Object.fromEntries((suppliers || []).map((x) => [x.id, x]));
     const found = {};
+    const counts = {};
     (items || []).forEach((it) => {
-      const range = rangeKey(it, codeOf[it.supplier_id] || "");
+      const range = rangeKey(it, supOf[it.supplier_id] || "");
+      if (!range) return;
+      counts[range] = (counts[range] || 0) + 1;
       const cat = itemCategory(it);
-      if (!range || !cat) return;
+      if (!cat) return;
       const c = ((found[range] ||= {})[cat] ||= { cat, count: 0, sample: [] });
       c.count += 1;
       if (c.sample.length < 3) c.sample.push(it.gd || it.code);
     });
-    return Object.fromEntries(Object.entries(found)
+    const categories = Object.fromEntries(Object.entries(found)
       .map(([r, cs]) => [r, Object.values(cs).sort((a, b) => a.cat.localeCompare(b.cat))]));
+    return { categories, counts: items && suppliers ? counts : null };
   }, [items, suppliers]);
 }
 
-const short = (r) => RANGE_SHORT[r] || r;
-
-/* What a range prints as — "Oswin → Oswin · PMF", or one table. */
-const printsAs = (range, blocks) => blocks.map((b) => (b.rest
-  ? short(range) + (b.name ? ` · ${b.name}` : "")
-  : `${short(range)} · ${b.name || b.cats.join(" + ") || "…"}`)).join("  →  ");
+/* What a range prints as — "Oswin → Oswin · PMF", or one table. `short` is
+   the range's short name (rangeShort). */
+const printsAs = (short, blocks) => blocks.map((b) => (b.rest
+  ? short + (b.name ? ` · ${b.name}` : "")
+  : `${short} · ${b.name || b.cats.join(" + ") || "…"}`)).join("  →  ");
 
 /* One range's groups, edited in a popup: the blocks in print order, Reset to
    the range's default, and Save — which writes this range and leaves every
    other range as it was saved. */
-function RangeGroupsModal({ range, saved, categories, m, onClose }) {
+function RangeGroupsModal({ range, short, empty, saved, categories, m, onClose }) {
   const toast = useToast();
   const [blocks, setBlocks] = useState(() => clone(rangeBlocks(range, saved)));
   const cats = categories[range] || [];
@@ -428,11 +437,11 @@ function RangeGroupsModal({ range, saved, categories, m, onClose }) {
     setBlocks(next);
   };
   const save = () => m.saveGroups.mutate(withThis(blocks), {
-    onSuccess: () => { toast(`${short(range)}: item groups saved — lists and documents follow them now`); onClose(); },
+    onSuccess: () => { toast(`${short}: item groups saved — lists and documents follow them now`); onClose(); },
   });
 
   return (
-    <Modal title={`Item groups · ${short(range)}`} icon={Layers} onClose={onClose}
+    <Modal title={`Item groups · ${short}`} icon={Layers} onClose={onClose}
       footer={<>
         <Btn size="sm" variant="ghost" icon={RotateCcw} disabled={isDefault} onClick={() => setBlocks(clone(rangeBlocks(range, DEFAULT_GROUPS)))}>
           Reset to default
@@ -451,6 +460,7 @@ function RangeGroupsModal({ range, saved, categories, m, onClose }) {
           listed” prints the categories in the order shown; “By size” mixes them in the range's own
           order (Oswin by bore).
         </div>
+        {empty && <Note tone="amber" icon={AlertTriangle}>No items for {short} yet — groups set here apply to its items once they are added.</Note>}
         <ol className="grp-list">
           {blocks.map((g, i) => (
             <GroupBlock key={g.id || i} g={g} i={i} count={blocks.length} cats={cats} free={free}
@@ -459,7 +469,7 @@ function RangeGroupsModal({ range, saved, categories, m, onClose }) {
           ))}
         </ol>
         <div className="opt-hint">
-          Prints as: {printsAs(range, blocks)}{blocks.length < 2 && " (one table, as before)"}
+          Prints as: {printsAs(short, blocks)}{blocks.length < 2 && " (one table, as before)"}
         </div>
         {incomplete && <Note tone="amber" icon={AlertTriangle}>Every group needs at least one category — add one, or remove the group.</Note>}
         <div>
@@ -475,10 +485,8 @@ function RangeGroupsModal({ range, saved, categories, m, onClose }) {
 
 /* The card itself: one row per range, saying what it prints as. Clicking a
    range opens its groups in a popup. */
-function ItemGroupsCard({ saved, sequence, m }) {
-  const categories = useCategories();
+function ItemGroupsCard({ saved, sequence, suppliers, categories, counts, m }) {
   const [open, setOpen] = useState(null);
-  const ranges = (sequence?.length ? sequence : DEFAULT_SEQUENCE);
 
   return (
     <Card className="opt-card">
@@ -489,15 +497,19 @@ function ItemGroupsCard({ saved, sequence, m }) {
           letters a GD code starts with (PE, PMF, PFH …). Click a range to change its groups.
         </div>
         <ol className="seq-list">
-          {ranges.map((r) => {
+          {sequence.map((r) => {
             const blocks = rangeBlocks(r, saved);
+            const short = rangeShort(r, suppliers);
+            const empty = counts && !counts[r];
             return (
               <li key={r}>
                 <button type="button" className="seq-item grp-row" onClick={() => setOpen(r)}
-                  title={`Change ${short(r)}'s item groups`}>
+                  title={`Change ${short}'s item groups`}>
                   <span className="opt-text">
-                    {r === "Oswin" ? "Oswin" : RANGE_LABEL[r] || r}
-                    <span className="grp-sub grp-prints">{blocks.length > 1 ? printsAs(r, blocks) : "One table"}</span>
+                    {r === "Oswin" ? "Oswin" : rangeLabel(r, suppliers)}
+                    <span className="grp-sub grp-prints">
+                      {empty ? "No items" : blocks.length > 1 ? printsAs(short, blocks) : "One table"}
+                    </span>
                   </span>
                   {blocks.length > 1 && <Pill tone="teal">{blocks.length} blocks</Pill>}
                   <Pencil size={14} style={{ color: "var(--faint)", flexShrink: 0 }} />
@@ -507,7 +519,8 @@ function ItemGroupsCard({ saved, sequence, m }) {
           })}
         </ol>
       </div>
-      {open && <RangeGroupsModal range={open} saved={saved} categories={categories} m={m} onClose={() => setOpen(null)} />}
+      {open && <RangeGroupsModal range={open} short={rangeShort(open, suppliers)} empty={!!counts && !counts[open]}
+        saved={saved} categories={categories} m={m} onClose={() => setOpen(null)} />}
     </Card>
   );
 }
@@ -515,6 +528,12 @@ function ItemGroupsCard({ saved, sequence, m }) {
 export default function AdditionalSettingsPanel() {
   const q = useOptions();
   const m = useOptionMutations();
+  const suppliers = useSuppliers().data;
+  const { categories, counts } = useCategories(suppliers);
+  /* Worked out against the suppliers on hand, not just read from the saved
+     settings, so a supplier added or removed shows here straight away. */
+  const sequence = useMemo(() => fullSequence(q.data?.item_sequence, suppliers), [q.data?.item_sequence, suppliers]);
+  const defaults = useMemo(() => fullSequence([], suppliers), [suppliers]);
 
   if (q.isLoading) return <Spinner label="Loading the settings…" />;
   if (q.error) return <ErrorState error={q.error} onRetry={q.refetch} />;
@@ -524,10 +543,11 @@ export default function AdditionalSettingsPanel() {
     <div className="opt-grid">
       {LISTS.map((cfg) => (
         <ListCard key={cfg.key} cfg={cfg} values={o[cfg.key] || []} busy={m.saveList.isPending}
-          save={(values, cb) => m.saveList.mutate({ key: cfg.key, values }, cb)} />
+          save={(values, renames, cb) => m.saveList.mutate({ key: cfg.key, values, renames }, cb)} />
       ))}
-      <SequenceCard sequence={o.item_sequence || DEFAULT_SEQUENCE} m={m} />
-      <ItemGroupsCard saved={o.item_groups || DEFAULT_GROUPS} sequence={o.item_sequence || DEFAULT_SEQUENCE} m={m} />
+      <SequenceCard sequence={sequence} defaults={defaults} suppliers={suppliers} counts={counts} m={m} />
+      <ItemGroupsCard saved={o.item_groups || DEFAULT_GROUPS} sequence={sequence} suppliers={suppliers}
+        categories={categories} counts={counts} m={m} />
       <BanksCard banks={o.banks || []} m={m} />
     </div>
   );

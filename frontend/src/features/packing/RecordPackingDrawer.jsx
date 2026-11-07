@@ -6,16 +6,19 @@ import {
 } from "../../components/ui/index.jsx";
 import {
   useGroupedItems, useBuyers, useSuppliers, useTransports, useInvoiceMutations, useBalance,
-  useItems, useOptions, useAllocationPreview,
+  useItems, useOptions, useAllocationPreview, useOpenOrders,
 } from "../../api/hooks.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
 import { todayISO, num } from "../../lib/format.js";
 import { useDebounced } from "../../lib/useDebounced.js";
 import { transportsFor } from "../../lib/transports.js";
 import { sortBySequence, blockOf, blockHeads } from "../../lib/sequence.js";
+import { placement, toPins } from "../../lib/poAlloc.js";
 import ShipTermsFields from "../shipments/ShipTermsFields.jsx";
+import CustomPoPanel from "./CustomPoPanel.jsx";
 
-/* Record packing — boxes clear the oldest open order first.
+/* Record packing — boxes clear the oldest open order first (FIFO), or come off
+   the orders picked for them (Custom PO).
 
    The RBI reference rate lives here, not at order entry: it is the rate on
    the day the goods were packed, which is what the customs invoice and the
@@ -39,6 +42,11 @@ export default function RecordPackingDrawer({ onClose }) {
   /* The shipment's terms, known when the goods are packed — they are written
      to the invoice's shipment details, where they can still be changed. */
   const [ship, setShip] = useState({});
+  /* FIFO, or the orders ticked once the boxes are in (lib/poAlloc.js). */
+  const [allocation, setAllocation] = useState("fifo");
+  const [picked, setPicked] = useState([]);
+  const [manual, setManual] = useState({});
+  const custom = allocation === "custom";
   const items = useItems().data || [];
   const opts = useOptions().data;
   const sequence = opts?.item_sequence;
@@ -94,7 +102,9 @@ export default function RecordPackingDrawer({ onClose }) {
       .filter((l) => l.boxes > 0).sort((a, b) => a.item_id.localeCompare(b.item_id)),
     [boxesBy],
   ), 350);
-  const preview = useAllocationPreview(typedLines.length ? { date, lines: typedLines } : null).data || {};
+  const preview = useAllocationPreview(!custom && typedLines.length ? { date, lines: typedLines } : null).data || {};
+  const openIds = useMemo(() => typedLines.map((l) => l.item_id), [typedLines]);
+  const openQ = useOpenOrders(custom ? openIds : []);
   const fifoFor = (itemId, typed) => {
     let left = Math.max(0, Math.floor(Number(typed) || 0));
     if (!left) return { legs: [], spare: 0 };
@@ -124,7 +134,9 @@ export default function RecordPackingDrawer({ onClose }) {
     return { boxes, pos: [...pos] };
   };
 
-  const setB = (id, v) => setBoxesBy((p) => ({ ...p, [id]: v }));
+  /* Changing a line's boxes undoes any split typed for the old figure. */
+  const forget = (...ids) => setManual((p) => Object.fromEntries(Object.entries(p).filter(([k]) => !ids.includes(k))));
+  const setB = (id, v) => { setBoxesBy((p) => ({ ...p, [id]: v })); forget(id); };
 
   /* Retyping the boxes in the summary is the same edit as retyping them in
      step 2 — one piece of state, so the two can never disagree. Switching the
@@ -132,6 +144,7 @@ export default function RecordPackingDrawer({ onClose }) {
      what decides who we book the goods in from. */
   const moveSupplier = (fromId, toId) => {
     if (!toId || toId === fromId) return;
+    forget(fromId, toId);
     setBoxesBy((p) => {
       const next = { ...p };
       const moved = Number(next[fromId]) || 0;
@@ -140,7 +153,7 @@ export default function RecordPackingDrawer({ onClose }) {
       return next;
     });
   };
-  const dropLine = (id) => setBoxesBy((p) => { const n = { ...p }; delete n[id]; return n; });
+  const dropLine = (id) => { setBoxesBy((p) => { const n = { ...p }; delete n[id]; return n; }); forget(id); };
 
   /* What is still owed goes to the top — that is the work. Items with nothing
      pending sink below, most-owed first within each block, so the list reads
@@ -202,15 +215,22 @@ export default function RecordPackingDrawer({ onClose }) {
   }, [rows]);
   const supIds = supAgg.map((s) => s.supplierId);
 
+  const place = useMemo(() => placement(rows, openQ.data, picked, manual), [rows, openQ.data, picked, manual]);
+  const canSave = !!invoiceNo && rows.length > 0 && !create.isPending && (!custom || place.ok);
+
   const save = () => {
-    if (!invoiceNo || !rows.length) return;
+    if (!canSave) return;
     create.mutate(
       {
         invoice_no: invoiceNo, date, buyer_id: buyerId || null,
         rbi: Number(rbi) || 0, serial_start: Number(serialStart) || 0,
         packing_transports: packingTransports,
         ship: Object.fromEntries(Object.entries(ship).filter(([, v]) => v !== "" && v != null)),
-        lines: rows.map((r) => ({ item_id: r.item_id, supplier_id: r.supplier_id, boxes: r.boxes })),
+        allocation,
+        lines: rows.map((r) => ({
+          item_id: r.item_id, supplier_id: r.supplier_id, boxes: r.boxes,
+          ...(custom ? { po_alloc: toPins(place.byItem[r.item_id]?.cells) } : {}),
+        })),
       },
       {
         onSuccess: () => {
@@ -222,7 +242,8 @@ export default function RecordPackingDrawer({ onClose }) {
   };
 
   return (
-    <Drawer title="Record packing" subtitle="Boxes you enter here clear the oldest open order first."
+    <Drawer title="Record packing"
+      subtitle={custom ? "Enter the boxes, then choose the orders they come off." : "Boxes you enter here clear the oldest open order first."}
       icon={PackageCheck} onClose={onClose}
       footer={<>
         {/* The summary table's own totals, plus the serial block the invoice
@@ -231,10 +252,11 @@ export default function RecordPackingDrawer({ onClose }) {
           { label: "Boxes", value: num(totalBoxes, 0) },
           { label: "Volume m³", value: num(totalVol, 3) },
           { label: "Carton serials", value: `${Number(serialStart) || 0}–${(Number(serialStart) || 0) + totalBoxes - 1}` },
+          ...(custom && place.short ? [{ label: "To place on a PO", value: num(place.short, 0) }] : []),
         ] : []} />
         <div className="row" style={{ gap: 8 }}>
           <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-          <Btn icon={Check} disabled={!invoiceNo || !rows.length || create.isPending} onClick={save}>
+          <Btn icon={Check} disabled={!canSave} onClick={save}>
             {create.isPending ? "Saving…" : "Create invoice"}
           </Btn>
         </div>
@@ -254,18 +276,26 @@ export default function RecordPackingDrawer({ onClose }) {
             <Field label="RBI rate ₹/$" hint="The Reserve Bank reference rate on the packing date — captured here, not at order entry.">
               <NumberInput className="rate" decimal value={rbi} onChange={setRbi} placeholder="e.g. 87.25" />
             </Field>
-            <Field label="Serial (carton) start" hint="The first carton number. Each line takes the next block of numbers in the supplier sequence — Oswin by bore, then VP-PP, Hansa-PP, Hansa-GRN, VP-GRN — so ranges never overlap. Once allotted, a line keeps its numbers: removing an item later leaves its numbers unused instead of shifting the rest.">
+            <Field label="Serial (carton) start" hint="The first carton number. Each line takes the next block of numbers in the supplier sequence (Setup → Additional settings), so ranges never overlap. Once allotted, a line keeps its numbers: removing an item later leaves its numbers unused instead of shifting the rest.">
               <NumberInput value={serialStart} onChange={setSerialStart} placeholder="e.g. 2001" />
             </Field>
           </div>
           <div className="grid-3" style={{ marginTop: 12 }}>
             <ShipTermsFields ship={ship} onSet={(patch) => setShip((p) => ({ ...p, ...patch }))} buyer={buyer} />
+            <Field label="Deduct boxes from" hint="FIFO clears the oldest open order first. Custom PO lets you choose the orders once the boxes are entered.">
+              <Select value={allocation} onChange={(e) => setAllocation(e.target.value)} aria-label="Deduct boxes from">
+                <option value="fifo">FIFO — oldest order first</option>
+                <option value="custom">Custom PO</option>
+              </Select>
+            </Field>
           </div>
         </section>
 
         <section>
           <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end", gap: 10 }}>
-            <Step n="2" title="How many boxes did each supplier pack?" hint="Everything still pending is listed first. Type a figure and the line beneath it names the orders those boxes clear — oldest first." />
+            <Step n="2" title="How many boxes did each supplier pack?" hint={custom
+              ? "Everything still pending is listed first. Type the boxes for every item — the orders holding them are offered below."
+              : "Everything still pending is listed first. Type a figure and the line beneath it names the orders those boxes clear — oldest first."} />
             <div className="row" style={{ gap: 8, marginBottom: 10 }}>
               <Select className="input-sm" style={{ width: 210 }} value={supFilter} onChange={(e) => setSupFilter(e.target.value)}>
                 <option value="">All suppliers</option>
@@ -313,7 +343,13 @@ export default function RecordPackingDrawer({ onClose }) {
                     </div>
                     <div className="stack-sm">
                       {g.variants.map((v, si) => {
-                        const fifo = fifoFor(v.item_id, boxesBy[v.item_id]);
+                        const placed = custom ? place.byItem[v.item_id] : null;
+                        const fifo = custom
+                          ? {
+                            legs: toPins(placed?.cells).map((l) => ({ po: l.po, boxes: l.boxes })),
+                            spare: placed?.spare || 0,
+                          }
+                          : fifoFor(v.item_id, boxesBy[v.item_id]);
                         return (
                           <div key={v.item_id} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
                             <span className="row" style={{ minWidth: 0, gap: 8, paddingTop: 5 }}>
@@ -332,8 +368,13 @@ export default function RecordPackingDrawer({ onClose }) {
                               {fifo.legs.length > 0 && (
                                 <span className="fifo-tag">
                                   <Pill tone="green">
-                                    Cleared : {fifo.legs.map((l) => `PO ${l.po}(${l.boxes})`).join(", ")}
+                                    {custom ? "From" : "Cleared"} : {fifo.legs.map((l) => `PO ${l.po}(${l.boxes})`).join(", ")}
                                   </Pill>
+                                </span>
+                              )}
+                              {placed?.short > 0 && (
+                                <span className="fifo-tag">
+                                  <Pill tone="amber">{placed.short} to place on an order</Pill>
                                 </span>
                               )}
                               {fifo.spare > 0 && (
@@ -358,8 +399,13 @@ export default function RecordPackingDrawer({ onClose }) {
           </Card>
         </section>
 
+        {custom && rows.length > 0 && (
+          <CustomPoPanel n="3" rows={rows} query={openQ} picked={picked} onPicked={setPicked}
+            manual={manual} onManual={setManual} place={place} buyerId={buyerId} />
+        )}
+
         <section>
-          <Step n="3" title="Check before you create the invoice"
+          <Step n={custom && rows.length ? "4" : "3"} title="Check before you create the invoice"
             hint="Edit the boxes or switch the supplier right here — step 2 follows along." />
           {rows.length ? (
             <div className="stack-sm">
@@ -428,7 +474,7 @@ export default function RecordPackingDrawer({ onClose }) {
 
         {supIds.length > 0 && (
           <section>
-            <Step n="4" title="Who is the transporter for each supplier?" hint="Pick the carrier that will move each supplier's boxes. Added under Setup → Transport." />
+            <Step n={custom ? "5" : "4"} title="Who is the transporter for each supplier?" hint="Pick the carrier that will move each supplier's boxes. Added under Setup → Transport." />
             <Card>
               <div className="stack-sm" style={{ padding: 14 }}>
                 {supIds.map((sid) => {

@@ -19,7 +19,7 @@ PERM_TREE = [
     },
     {
         "id": "shipment", "label": "Shipment", "children": [
-            {"id": "shipment.packing", "label": "Packing — FIFO", "hint": "Record supplier boxes, create invoices"},
+            {"id": "shipment.packing", "label": "Packing", "hint": "Record supplier boxes, create invoices"},
             {"id": "shipment.details", "label": "Shipment details", "hint": "BL, vessel, container, seal"},
             {"id": "shipment.reports", "label": "Suppliers' Reports", "hint": "Packing, purchase, sales, DO, e-way"},
         ],

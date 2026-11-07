@@ -279,6 +279,10 @@ class Invoice(Base):
     ship = Column(JSON, default=dict)                # BL / container / shipping fields
     step_skip = Column(JSON, default=dict)           # { vehicle, container, ship }
     packing_transports = Column(JSON, default=dict)  # { supplierId: transportId }
+    # How this invoice's boxes come off the order book: "fifo" clears the oldest
+    # open order first; "custom" takes them from the orders named on each line
+    # (InvoiceLine.po_alloc). NULL on an invoice from before the column — FIFO.
+    allocation = Column(String, default="fifo")
     created_at = Column(DateTime, default=datetime.utcnow)
     # Read back in the order the cartons were numbered in — `position` is set
     # when the invoice is written (see routers/invoices.py), so the serial
@@ -323,6 +327,11 @@ class InvoiceLine(Base):
     # serial_from … serial_from + boxes − 1. NULL only on a line written before
     # the column existed, which migrate.py fills in from the old running count.
     serial_from = Column(Integer, nullable=True)
+    # Custom PO only: which purchase orders these boxes come off,
+    # [{"po": "2036486", "boxes": 12}, …]. NULL means FIFO. The ledger gives
+    # these boxes to those orders before any FIFO box is walked
+    # (calc.compute_ledger), so a later or back-dated invoice cannot take them.
+    po_alloc = Column(JSON(none_as_null=True), nullable=True)
     invoice = relationship("Invoice", back_populates="lines")
 
 

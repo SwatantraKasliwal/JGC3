@@ -26,6 +26,7 @@ import { fitCells } from "../../lib/fitCells.js";
 import { dmy, dmyNum } from "../../lib/format.js";
 import { INV_STATUS_TONE } from "../../lib/constants.js";
 import ShipmentWizard from "../shipments/ShipmentWizard.jsx";
+import { portsFor } from "../../lib/ports.js";
 
 /* Documents — the export papers, generated live.
 
@@ -54,10 +55,14 @@ function PreShipPanel({ inv, onWizard }) {
      settings, as they do on the shipment details. */
   const LISTED = {
     terms: opts.terms_delivery || [],
-    pod: (buyer?.ports?.length ? buyer.ports : null) || opts.ports_ship_to || [],
+    pod: portsFor(buyer, opts),
   };
   const [f, setF] = useState({ ...(inv.ship || {}) });
-  useEffect(() => { setF({ ...(inv.ship || {}) }); }, [inv.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* Follows the invoice, not just which invoice this is: details saved through
+     the 3-step wizard, or a correction carried over from Setup, must show here —
+     or the next Save writes the old values back over them. */
+  const saved = JSON.stringify(inv.ship || {});
+  useEffect(() => { setF(JSON.parse(saved)); }, [inv.id, saved]);
 
   const F = [
     ["blNo", "BL No.", "text"], ["blDate", "BL Date", "date"], ["vessel", "Vessel / voyage", "text"],
