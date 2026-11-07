@@ -1208,12 +1208,12 @@ export const poBannerList = (ctx) => {
 // invoice — from the shipment vehicle details, falling back to the packing pick.
 export function transportInfo(ctx, sid) {
   const v = (ctx.inv.vehicles || {})[sid] || {};
-  let name = v.transportName || "", veh = v.vehicleNo || "";
+  const veh = v.vehicleNo || "";
   const tid = v.transportId || (ctx.inv.packingTransports || {})[sid];
   const t = (ctx.transports || []).find((x) => x.id === tid);
-  if (!name) {
-    name = t?.name || ""; if (!v.vehicleNo && t) veh = veh || "";
-  }
+  // Setup's name wins, as for suppliers and buyers: a renamed transporter prints
+  // renamed. The name kept on the invoice is for one since removed from Setup.
+  const name = t?.name || v.transportName || "";
   // The transporter's own GST/enrolment id — the e-way form asks for it.
   return { name: name || "—", veh: veh || "—", transportId: t?.transportId || "" };
 }

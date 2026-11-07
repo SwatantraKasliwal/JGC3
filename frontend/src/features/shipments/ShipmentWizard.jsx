@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Truck, Container, Ship, Check, ChevronRight, ChevronLeft, SkipForward, Lock } from "lucide-react";
 import { Modal, Btn, Field, Input, Select, Pill, Note, Step } from "../../components/ui/index.jsx";
 import { useIsMobile } from "../../lib/useIsMobile.js";
@@ -50,6 +50,26 @@ export default function ShipmentWizard({ inv, onClose }) {
     });
     return v;
   });
+  /* The form can open before Setup's lists have arrived, and those defaults are
+     only worked out once — so fill in what is still blank when they land, and
+     keep each transporter's name as Setup now spells it. */
+  useEffect(() => {
+    if (!transports.length && !suppliers.length) return;
+    setVehicles((prev) => {
+      const next = { ...prev };
+      sups.forEach((s) => {
+        const ex = next[s] || EMPTY_VEHICLE;
+        const tid = ex.transportId || (inv.packing_transports || {})[s] || transportsFor(transports, s)[0]?.id || "";
+        next[s] = {
+          ...ex, transportId: tid,
+          transportName: transports.find((x) => x.id === tid)?.name || ex.transportName || "",
+          source: ex.source || supById(s)?.place || "",
+        };
+      });
+      return next;
+    });
+  }, [transports, suppliers]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [ship, setShip] = useState({ ...(inv.ship || {}) });
   const [skip, setSkip] = useState({ ...(inv.step_skip || {}) });
   const [step, setStep] = useState(1);

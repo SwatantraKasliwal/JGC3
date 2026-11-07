@@ -8,8 +8,13 @@ import { notifyError } from "../lib/errorBus.js";
 /* A save with no form of its own to show a failure in says so in a toast. */
 const loud = { onError: notifyError };
 
+/* Setup is often open in one tab and the shipment in another, or on someone
+   else's computer. What Setup holds is read again on coming back to a tab, once
+   it is more than a few seconds old, so a list added there shows up here. */
+const LIVE = { refetchOnWindowFocus: true };
+
 function crudHooks(key, resource, extraInvalidate = []) {
-  const useList = () => useQuery({ queryKey: [key], queryFn: resource.list });
+  const useList = () => useQuery({ queryKey: [key], queryFn: resource.list, ...LIVE });
   const useInvalidate = () => {
     const qc = useQueryClient();
     return () => {
@@ -32,21 +37,28 @@ function crudHooks(key, resource, extraInvalidate = []) {
   return { useList, useCreate, useUpdate, useRemove };
 }
 
+/* Everything worked out from the allocation ledger — the order book against
+   the boxes packed. Saving an order or an invoice moves all of it: which is why
+   the documents' PO columns, the registers and doc 38 read one list, not three
+   that drift apart. */
+const LEDGER = ["dashboard", "badges", "po-list", "po-lines", "invoices", "item-detail", "balance",
+  "supply-details", "order-lines", "master-2a", "master-7a", "price-drift", "pending-for-item",
+  "alloc-preview", "open-orders"];
+
 // Masters — mutations also refresh dependent computed views.
-const DERIVED = ["dashboard", "badges", "po-list", "po-lines", "invoices", "item-detail",
-  "balance", "item-groups", "items-grouped", "order-lines", "master-2a", "master-7a", "derive"];
+const DERIVED = [...LEDGER, "item-groups", "items-grouped", "derive", "cost-preview"];
 
 export const {
   useList: useSuppliers, useCreate: useCreateSupplier,
   useUpdate: useUpdateSupplier, useRemove: useDeleteSupplier,
-} = crudHooks("suppliers", api.suppliers, DERIVED);
+} = crudHooks("suppliers", api.suppliers, [...DERIVED, "options"]); // the sequence follows the suppliers
 
 export const {
   useList: useBuyers, useCreate: useCreateBuyer,
   useUpdate: useUpdateBuyer, useRemove: useDeleteBuyer,
-} = crudHooks("buyers", api.buyers, DERIVED);
+} = crudHooks("buyers", api.buyers, [...DERIVED, "options"]); // an unsaved port list is read off the buyers
 
-const itemHooks = crudHooks("items", api.items, DERIVED);
+const itemHooks = crudHooks("items", api.items, [...DERIVED, "options"]); // likewise packaging types
 export const { useCreate: useCreateItem, useUpdate: useUpdateItem, useRemove: useDeleteItem } = itemHooks;
 
 /* Items take optional server-side filters — { supplier_id, group, q }. The
@@ -56,7 +68,7 @@ export const { useCreate: useCreateItem, useUpdate: useUpdateItem, useRemove: us
    until the new one lands, so a list never flashes "no item matches" while
    the search is still running — see ResultState. */
 export const useItems = (params) =>
-  useQuery({ queryKey: ["items", params || {}], queryFn: () => api.items.list(params), placeholderData: keepPreviousData });
+  useQuery({ queryKey: ["items", params || {}], queryFn: () => api.items.list(params), placeholderData: keepPreviousData, ...LIVE });
 
 export const useItemGroups = () =>
   useQuery({ queryKey: ["item-groups"], queryFn: api.items.groups });
@@ -64,7 +76,7 @@ export const useItemGroups = () =>
 /* The master keyed the way an order is placed — one product, then the
    suppliers who make it. */
 export const useGroupedItems = (params) =>
-  useQuery({ queryKey: ["items-grouped", params || {}], queryFn: () => api.items.grouped(params), placeholderData: keepPreviousData });
+  useQuery({ queryKey: ["items-grouped", params || {}], queryFn: () => api.items.grouped(params), placeholderData: keepPreviousData, ...LIVE });
 
 export const {
   useList: useTransports, useCreate: useCreateTransport,
@@ -86,7 +98,7 @@ export function useImportMasters() {
   return useMutation({
     mutationFn: (overwrite) => api.masters.import(overwrite),
     ...loud,
-    onSuccess: () => ["items", "item-groups", "suppliers", "buyers", "transports", ...DERIVED]
+    onSuccess: () => ["items", "item-groups", "suppliers", "buyers", "transports", "options", ...DERIVED]
       .forEach((k) => qc.invalidateQueries({ queryKey: [k] })),
   });
 }
@@ -121,8 +133,7 @@ export const usePoList = () => useQuery({ queryKey: ["po-list"], queryFn: api.pu
 export const usePoLines = () => useQuery({ queryKey: ["po-lines"], queryFn: api.purchaseOrders.lines });
 export function usePoMutations() {
   const qc = useQueryClient();
-  const invalidate = () => ["po-list", "po-lines", "dashboard", "badges", "item-detail", "balance",
-    "order-lines", "master-2a", "master-7a"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  const invalidate = () => LEDGER.forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   return {
     create: useMutation({ mutationFn: api.purchaseOrders.create, onSuccess: invalidate, ...loud }),
     update: useMutation({ mutationFn: ({ po, body }) => api.purchaseOrders.update(po, body), onSuccess: invalidate, ...loud }),
@@ -134,8 +145,8 @@ export function usePoMutations() {
 export const useInvoices = () => useQuery({ queryKey: ["invoices"], queryFn: api.invoices.list });
 export function useInvoiceMutations() {
   const qc = useQueryClient();
-  const invalidate = () => ["invoices", "dashboard", "badges", "po-list", "balance", "order-lines",
-    "master-2a", "master-7a"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  // "options": an unsaved list of terms or ports is read off the invoices.
+  const invalidate = () => [...LEDGER, "options"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   return {
     create: useMutation({ mutationFn: api.invoices.create, onSuccess: invalidate, ...loud }),
     update: useMutation({ mutationFn: ({ id, body }) => api.invoices.update(id, body), onSuccess: invalidate, ...loud }),
@@ -154,6 +165,18 @@ export const useAllocationPreview = (body) =>
     enabled: !!body && Array.isArray(body.lines) && body.lines.length > 0,
     placeholderData: (prev) => prev,
     staleTime: 10_000,
+  });
+
+/* Custom PO: the orders still holding these items, oldest first. Given an
+   invoice being edited, its own boxes count as free. Disabled until something
+   has been typed. */
+export const useOpenOrders = (itemIds, excludeInvoiceId) =>
+  useQuery({
+    queryKey: ["open-orders", itemIds, excludeInvoiceId || null],
+    queryFn: () => api.invoices.openOrders({ item_ids: itemIds, exclude_invoice_id: excludeInvoiceId || null }),
+    enabled: Array.isArray(itemIds) && itemIds.length > 0,
+    placeholderData: (prev) => prev,
+    staleTime: 0,
   });
 
 // Derived / reports
@@ -216,17 +239,19 @@ export function useApplyPrices() {
    several at once. Saving any of them refreshes it — and the reports, which
    are sorted in the item sequence it carries. */
 export const useOptions = () =>
-  useQuery({ queryKey: ["options"], queryFn: api.options.all, staleTime: 60_000 });
+  useQuery({ queryKey: ["options"], queryFn: api.options.all, staleTime: 5_000, ...LIVE });
 
 export function useOptionMutations() {
   const qc = useQueryClient();
-  const invalidate = () => ["options"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  /* A list entry corrected or removed is carried by the API onto the buyers,
+     items and open invoices that picked it, so those are read again as well. */
+  const invalidate = () => ["options", "buyers", "items", "invoices"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   /* The sequence and the item groups reorder every list the API returns, so
      those are refetched with them. */
   const resequence = () => ["options", "items", "items-grouped", "po-list", "item-detail", "balance", "supply-details",
     "master-2a", "master-7a", "order-lines", "derive"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   return {
-    saveList: useMutation({ mutationFn: ({ key, values }) => api.options.saveList(key, values), onSuccess: invalidate }),
+    saveList: useMutation({ mutationFn: ({ key, values, renames }) => api.options.saveList(key, values, renames), onSuccess: invalidate }),
     addBank: useMutation({ mutationFn: api.options.addBank, onSuccess: invalidate }),
     updateBank: useMutation({ mutationFn: ({ id, body }) => api.options.updateBank(id, body), onSuccess: invalidate }),
     removeBank: useMutation({ mutationFn: (id) => api.options.removeBank(id), onSuccess: invalidate }),
@@ -238,7 +263,7 @@ export function useOptionMutations() {
 /* The item master's saved column layout (Setup → Items → Customise columns).
    Every report and download leaves out the item fields it has unticked. */
 export const useItemColumns = () =>
-  useQuery({ queryKey: ["item-columns"], queryFn: api.options.itemColumns, staleTime: 60_000 });
+  useQuery({ queryKey: ["item-columns"], queryFn: api.options.itemColumns, staleTime: 5_000, ...LIVE });
 
 export function useSaveItemColumns() {
   const qc = useQueryClient();
@@ -252,7 +277,7 @@ export function useSaveItemColumns() {
 /* Setup → Document columns: which columns each document hides or deletes
    (lib/docColumns.js). Every paper built in the app reads it. */
 export const useDocColumns = () =>
-  useQuery({ queryKey: ["doc-columns"], queryFn: api.options.docColumns, staleTime: 60_000 });
+  useQuery({ queryKey: ["doc-columns"], queryFn: api.options.docColumns, staleTime: 5_000, ...LIVE });
 
 export function useSaveDocColumns() {
   const qc = useQueryClient();

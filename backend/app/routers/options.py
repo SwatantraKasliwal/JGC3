@@ -37,13 +37,16 @@ def all_options(db: Session = Depends(get_db)):
 
 class ListBody(BaseModel):
     values: list[str] = []
+    # { old spelling: new spelling } — an entry corrected rather than replaced,
+    # so what already picked it can follow.
+    renames: dict[str, str] = {}
 
 
 @router.put("/list/{key}", dependencies=[Depends(_write)])
 def save_list(key: str, body: ListBody, db: Session = Depends(get_db)):
     if key not in options.LISTS:
         raise HTTPException(404, "No such list")
-    return {"key": key, "values": options.save_list(db, key, body.values)}
+    return {"key": key, "values": options.save_list(db, key, body.values, body.renames)}
 
 
 # ---------- banks ----------
@@ -115,6 +118,7 @@ def edit_bank(bid: str, body: BankIn, db: Session = Depends(get_db)):
     if any(b.get("account_no") == rec["account_no"] and b.get("id") != bid for b in banks):
         raise HTTPException(409, "That account number is already on the list")
     banks[at] = rec
+    options.carry_bank(db, rec)
     options.save_banks(db, banks)
     return rec
 

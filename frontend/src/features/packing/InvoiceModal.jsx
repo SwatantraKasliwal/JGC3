@@ -14,6 +14,13 @@ import { sortBySequence, blockOf, blockHeads } from "../../lib/sequence.js";
 
 const shipComplete = (s) => !!(s && s.blNo && s.vessel && s.container && s.pod);
 
+const legsCol = {
+  key: "legs", label: "Purchase orders",
+  render: (x) => (x.legs.length
+    ? <span className="row wrap" style={{ gap: 4 }}>{x.legs.map((l) => <Pill key={l.po}>PO {l.po} · {l.boxes}</Pill>)}</span>
+    : <span style={{ color: "var(--faint)" }}>beyond what is on order</span>),
+};
+
 /* One invoice, two audiences: the buyer sees USD/FOB, the supplier sees
    ₹/cost. Same rows, same source — just a different lens. */
 export default function InvoiceModal({ inv, onEditShip, onClose }) {
@@ -55,6 +62,8 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
       const from = froms[li]; const to = from + boxes - 1;
       return {
         it, supplierId: l.supplier_id, boxes, pieces,
+        // The orders these boxes came off, from the same ledger the papers read.
+        legs: (inv.po_legs || {})[l.item_id] || [],
         volume: boxes * (it.volume || 0), netWt: boxes * (it.net_per_box || 0),
         buyerRate, buyerAmt: pieces * buyerRate,
         supRate, supAmt: pieces * supRate,
@@ -85,6 +94,7 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
     { key: "boxes", w: 78, label: "Boxes", align: "r", strong: true, render: (x) => x.boxes },
     { key: "pieces", label: "Pieces", align: "r", render: (x) => x.pieces.toLocaleString("en-IN") },
     { key: "vol", label: "Vol m³", align: "r", render: (x) => num(x.volume, 3) },
+    legsCol,
     { key: "rate", label: "Rate $/pc", align: "r" },
     { key: "amt", label: "Amount $", align: "r", strong: true },
   ]);
@@ -96,6 +106,7 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
     { key: "boxes", w: 78, label: "Boxes", align: "r", strong: true, render: (x) => x.boxes },
     { key: "pieces", label: "Pieces", align: "r", render: (x) => x.pieces.toLocaleString("en-IN") },
     { key: "vol", label: "Vol m³", align: "r", render: (x) => num(x.volume, 3) },
+    legsCol,
     { key: "rate", label: "Rate ₹/pc", align: "r" },
     { key: "amt", label: "Amount ₹", align: "r", strong: true },
   ]);
@@ -110,6 +121,7 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
           {dmy(inv.date)} · {buyer?.name || "—"} · {t.boxes} boxes · {num(t.volume, 3)} m³
           {inv.serial_start ? <> · serials from <Mono>{inv.serial_start}</Mono></> : null} ·
           <Pill tone={INV_STATUS_TONE[inv.status] || ""}>{inv.status}</Pill>
+          {inv.allocation === "custom" && <Pill tone="teal">Custom PO</Pill>}
         </span>
         <div className="row wrap" style={{ gap: 8 }}>
           <Btn variant="ghost" size="sm" icon={Pencil} onClick={onEditShip}>Edit shipment details</Btn>
@@ -140,10 +152,10 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
         itemsQ.isError ? <ErrorState error={itemsQ.error} onRetry={itemsQ.refetch} /> : <Spinner label="Loading the invoice…" />
       ) : tab === "buyer" ? (
         <DataTable serial columns={buyerCols} rows={lines} rowKey={(x, i) => i} freeze={5} section={(x) => x.head}
-          footer={[{ v: "Total", span: 4 }, { v: t.boxes, align: "r" }, { v: t.pieces.toLocaleString("en-IN"), align: "r" }, { v: num(t.volume, 3), align: "r" }]} />
+          footer={[{ v: "Total", span: 4 }, { v: t.boxes, align: "r" }, { v: t.pieces.toLocaleString("en-IN"), align: "r" }, { v: num(t.volume, 3), align: "r" }, { v: "" }]} />
       ) : (
         <DataTable serial columns={supCols} rows={supRows} rowKey={(x, i) => i} freeze={5} section={(x, i) => supHeads[i]}
-          footer={[{ v: "Total", span: 4 }, { v: t.boxes, align: "r" }, { v: t.pieces.toLocaleString("en-IN"), align: "r" }, { v: num(t.volume, 3), align: "r" }]} />
+          footer={[{ v: "Total", span: 4 }, { v: t.boxes, align: "r" }, { v: t.pieces.toLocaleString("en-IN"), align: "r" }, { v: num(t.volume, 3), align: "r" }, { v: "" }]} />
       )}
     </Modal>
   );

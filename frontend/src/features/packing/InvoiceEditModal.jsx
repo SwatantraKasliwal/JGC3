@@ -1,14 +1,17 @@
 import { useMemo, useState } from "react";
 import { FileText, Check, Trash2, Hash, Plus, X, AlertTriangle } from "lucide-react";
 import {
-  Modal, Btn, Field, Input, NumberInput, Pill, Mono, Note, Empty, XScroll, Spinner, ErrorState,
+  Modal, Btn, Field, Input, NumberInput, Pill, Mono, Note, Empty, XScroll, Spinner, ErrorState, Select,
 } from "../../components/ui/index.jsx";
 import ItemPicker from "../../components/ItemPicker.jsx";
-import { useItems, useSuppliers, useInvoiceMutations, useOptions } from "../../api/hooks.js";
+import { useItems, useSuppliers, useInvoiceMutations, useOptions, useOpenOrders } from "../../api/hooks.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
 import { useAuth } from "../../auth/AuthProvider.jsx";
 import { bySequence } from "../../lib/sequence.js";
 import { previewSerials, rangeText } from "../../lib/serials.js";
+import { placement, toPins, fromLines } from "../../lib/poAlloc.js";
+import { useDebounced } from "../../lib/useDebounced.js";
+import CustomPoPanel from "./CustomPoPanel.jsx";
 
 /* Edit an invoice — number, date, serial start, and the lines themselves:
    retype the boxes, drop an item that never went on the container, or add one
@@ -23,7 +26,8 @@ import { previewSerials, rangeText } from "../../lib/serials.js";
 
    An item already on the invoice keeps the price it was raised at; a line
    added here is priced from the orders its boxes clear, exactly as recording
-   the packing would have priced it. Deleting the invoice outright is left to
+   the packing would have priced it. A line whose boxes move to other orders
+   under Custom PO takes those orders' prices. Deleting the invoice outright is left to
    an admin (the API refuses anyone else). */
 export default function InvoiceEditModal({ inv, onClose }) {
   const itemsQ = useItems();
@@ -43,6 +47,11 @@ export default function InvoiceEditModal({ inv, onClose }) {
   const [confirm, setConfirm] = useState(false);
   const [adding, setAdding] = useState(false);
   const [renumber, setRenumber] = useState(false);
+  const [allocation, setAllocation] = useState(inv.allocation || "fifo");
+  const [{ picked, manual }, setPins] = useState(() => fromLines(inv.lines));
+  const setPicked = (next) => setPins((p) => ({ ...p, picked: next }));
+  const setManual = (next) => setPins((p) => ({ ...p, manual: next }));
+  const custom = allocation === "custom";
 
   const byId = useMemo(() => Object.fromEntries(items.map((i) => [i.id, i])), [items]);
   const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
@@ -50,8 +59,13 @@ export default function InvoiceEditModal({ inv, onClose }) {
   const sequence = opts?.item_sequence;
   const itemGroups = opts?.item_groups;
 
-  const setBoxes = (key, v) => setLines((p) => p.map((l) => (l.key === key ? { ...l, boxes: v } : l)));
-  const drop = (key) => setLines((p) => p.filter((l) => l.key !== key));
+  /* Changing a line's boxes undoes any split typed for the old figure. */
+  const forget = (key) => {
+    const id = lines.find((l) => l.key === key)?.item_id;
+    setPins((p) => ({ ...p, manual: Object.fromEntries(Object.entries(p.manual).filter(([k]) => k !== id)) }));
+  };
+  const setBoxes = (key, v) => { setLines((p) => p.map((l) => (l.key === key ? { ...l, boxes: v } : l))); forget(key); };
+  const drop = (key) => { setLines((p) => p.filter((l) => l.key !== key)); forget(key); };
   /* Everything typed into the picker joins the invoice in one action — each
      line slotted in where the item sequence puts it, ahead of the first line
      that comes after it. The lines already there keep their order, so the
@@ -71,6 +85,15 @@ export default function InvoiceEditModal({ inv, onClose }) {
 
   const totalBoxes = lines.reduce((s, l) => s + (Number(l.boxes) || 0), 0);
 
+  /* Custom PO — the same panel as record packing, with this invoice's own boxes
+     counted as free. */
+  const poRows = useMemo(() => lines
+    .map((l) => ({ item_id: l.item_id, boxes: Number(l.boxes) || 0, gd: byId[l.item_id]?.gd, description: byId[l.item_id]?.description }))
+    .filter((r) => r.boxes > 0), [lines, byId]);
+  const poIds = useDebounced(useMemo(() => poRows.map((r) => r.item_id).sort(), [poRows]), 350);
+  const openQ = useOpenOrders(custom ? poIds : [], inv.id);
+  const place = useMemo(() => placement(poRows, openQ.data, picked, manual), [poRows, openQ.data, picked, manual]);
+
   /* What the save will number each line — kept numbers for the lines already
      on the invoice, the next free ones for a line added here. */
   const serials = useMemo(
@@ -85,7 +108,11 @@ export default function InvoiceEditModal({ inv, onClose }) {
       id: inv.id,
       body: {
         invoice_no: invoiceNo, date, serial_start: Number(serialStart) || 0,
-        lines: lines.map((l) => ({ item_id: l.item_id, supplier_id: l.supplier_id, boxes: Number(l.boxes) || 0 })),
+        allocation,
+        lines: lines.map((l) => ({
+          item_id: l.item_id, supplier_id: l.supplier_id, boxes: Number(l.boxes) || 0,
+          ...(custom ? { po_alloc: toPins(place.byItem[l.item_id]?.cells) } : {}),
+        })),
         ...(renumber ? { renumber: true } : {}),
       },
     },
@@ -109,7 +136,7 @@ export default function InvoiceEditModal({ inv, onClose }) {
           : isAdmin ? <Btn variant="ghost" size="sm" icon={Trash2} onClick={() => setConfirm(true)}>Delete invoice</Btn> : <span />}
         <div className="row" style={{ gap: 8 }}>
           <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
-          <Btn size="sm" icon={Check} disabled={update.isPending || !lines.length || serials.clashes.length > 0} onClick={save}>
+          <Btn size="sm" icon={Check} disabled={update.isPending || !lines.length || serials.clashes.length > 0 || (custom && !place.ok)} onClick={save}>
             {update.isPending ? "Saving…" : "Save changes"}
           </Btn>
         </div>
@@ -121,6 +148,12 @@ export default function InvoiceEditModal({ inv, onClose }) {
           <Field label="Date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
           <Field label="Serial (carton) start" hint="The first carton number on this invoice. Changing it moves every line's numbers by the same amount; each line keeps its place.">
             <NumberInput value={serialStart} onChange={setSerialStart} placeholder="e.g. 2001" />
+          </Field>
+          <Field label="Deduct boxes from" hint="FIFO clears the oldest open order first. Custom PO comes off the orders you choose below.">
+            <Select value={allocation} onChange={(e) => setAllocation(e.target.value)} aria-label="Deduct boxes from">
+              <option value="fifo">FIFO — oldest order first</option>
+              <option value="custom">Custom PO</option>
+            </Select>
           </Field>
         </div>
         <Btn variant={adding ? "ghost" : "teal"} icon={adding ? X : Plus} onClick={() => setAdding((a) => !a)}>
@@ -199,6 +232,13 @@ export default function InvoiceEditModal({ inv, onClose }) {
         <Empty icon={FileText} title="Every line has been removed">
           An invoice needs at least one item. Add one above{isAdmin ? ", or delete the invoice outright" : ""}.
         </Empty>
+      )}
+
+      {custom && poRows.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <CustomPoPanel n="PO" rows={poRows} query={openQ} picked={picked} onPicked={setPicked}
+            manual={manual} onManual={setManual} place={place} buyerId={inv.buyer_id} />
+        </div>
       )}
     </Modal>
   );

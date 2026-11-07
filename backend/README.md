@@ -222,6 +222,21 @@ before writing, so the log is evidence rather than another place secrets live.
 | Reports | `/api/reports/item-detail`, `/api/reports/balance` |
 | Costing | `/api/costing` (rows carry a computed block), `/params`, `/formulas` |
 
+## Tests
+
+```bash
+cd backend
+PYTHONPATH=.venv/lib/python3.12/site-packages /usr/bin/python3.12 -m unittest discover -s tests -t .
+```
+
+`tests/base.py` pins `DATABASE_URL` to a throwaway SQLite file before anything from
+`app` loads, because importing `app.main` migrates whatever database the variable
+names, and `.env` names the live one. It refuses to run against a hosted database.
+Set `JG_TEST_DATABASE_URL` to run the same suite on a throwaway Postgres.
+
+The browser's figures and the papers: `npm run test:unit` and `npm run verify:docs`
+in `frontend/`.
+
 ## Docker
 
 ```bash

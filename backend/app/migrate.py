@@ -56,6 +56,7 @@ BACKFILL = {
         "our_reference": "''", "tagline": "''", "ac_code": "''", "abn": "''", "acn": "''",
         "tel": "''", "fax": "''", "web": "''", "email": "''", "po_box": "''", "logo": "''",
     },
+    "invoices": {"allocation": "'fifo'"},   # every invoice so far cleared oldest-first
     "transports": {"supplier_ids": None},   # JSON — leave NULL, read as []
     # buyers.ports is JSON too — NULL reads back as [] (schemas.BuyerBase).
     # suppliers.gst_pct is deliberately absent: NULL means "not set", and the

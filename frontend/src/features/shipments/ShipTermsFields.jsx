@@ -1,5 +1,6 @@
 import { Field, Input, Select } from "../../components/ui/index.jsx";
 import { useOptions } from "../../api/hooks.js";
+import { portsFor } from "../../lib/ports.js";
 
 /* The shipment's terms, picked from the lists kept under Setup → Additional
    settings rather than typed fresh on every invoice — so "FOB MUMBAI" is
@@ -51,9 +52,7 @@ export default function ShipTermsFields({ ship, onSet, buyer, show = {} }) {
   const banks = o.banks || [];
   const set = (k) => (v) => onSet({ [k]: v });
 
-  /* A buyer given ports under Setup → Buyers is offered those; otherwise
-     every ship-to port on the list is. */
-  const ports = (buyer?.ports?.length ? buyer.ports : null) || o.ports_ship_to || [];
+  const ports = portsFor(buyer, o);
 
   const bankId = ship.bankId && banks.some((b) => b.id === ship.bankId) ? ship.bankId : (ship.bank ? LEGACY : "");
   const pickBank = (id) => {
@@ -72,7 +71,7 @@ export default function ShipTermsFields({ ship, onSet, buyer, show = {} }) {
       <ListSelect label="Terms of payment" value={ship.payment} options={o.terms_payment || []} onChange={set("payment")} />
       <ListSelect label="Port of loading" value={ship.pol} options={o.ports_loading || []} onChange={set("pol")} />
       <ListSelect label="Ship to port (discharge)" value={ship.pod} options={ports} onChange={set("pod")}
-        hint={buyer?.ports?.length ? "This buyer's ports, from Setup → Buyers." : "From Setup → Additional settings → Ship to port."} />
+        hint={buyer?.ports?.length ? "This buyer's ports first, then the rest of Setup → Additional settings → Ship to port." : "From Setup → Additional settings → Ship to port."} />
       <Field label="Bank" hint="The account the proceeds come in through — Setup → Additional settings → Banks.">
         <Select value={bankId} onChange={(e) => pickBank(e.target.value)} aria-label="Bank" placeholder="— select —">
           <option value="">— select —</option>

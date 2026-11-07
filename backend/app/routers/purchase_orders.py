@@ -180,6 +180,21 @@ def create_purchase_order(body: schemas.PurchaseOrderCreate, db: Session = Depen
     return {"po": body.po, "lines": len(created)}
 
 
+def _repoint_pins(db: Session, po: str, new_po: str | None) -> None:
+    """Custom PO lines name their order by number, so a renamed order carries
+    them with it and a deleted one lets them go (those boxes fall back to FIFO)."""
+    for line in db.query(models.InvoiceLine).filter(models.InvoiceLine.po_alloc.isnot(None)).all():
+        pins = line.po_alloc or []
+        if not any(p.get("po") == po for p in pins):
+            continue
+        merged: dict = {}
+        for p in pins:
+            name = new_po if p.get("po") == po else p.get("po")
+            if name is not None:
+                merged[name] = merged.get(name, 0) + int(p.get("boxes") or 0)
+        line.po_alloc = [{"po": k, "boxes": v} for k, v in merged.items()] or None
+
+
 @router.put("/{po}", dependencies=[Depends(_write)])
 def update_purchase_order(po: str, body: schemas.PurchaseOrderUpdate, db: Session = Depends(get_db)):
     """Restate a purchase order: its number, its date, and the lines on it.
@@ -244,6 +259,8 @@ def update_purchase_order(po: str, body: schemas.PurchaseOrderUpdate, db: Sessio
         r.po = new_po
         if body.date:
             r.date = body.date
+    if new_po != po:
+        _repoint_pins(db, po, new_po)
     db.commit()
     return {"po": new_po, "lines": len(kept)}
 
@@ -253,5 +270,6 @@ def update_purchase_order(po: str, body: schemas.PurchaseOrderUpdate, db: Sessio
 @router.delete("/{po}", status_code=204, dependencies=[Depends(require_admin)])
 def delete_purchase_order(po: str, db: Session = Depends(get_db)):
     db.query(models.PurchaseOrderLine).filter(models.PurchaseOrderLine.po == po).delete()
+    _repoint_pins(db, po, None)
     db.commit()
     return None

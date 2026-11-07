@@ -14,8 +14,8 @@ import ShipmentWizard from "../shipments/ShipmentWizard.jsx";
 
 /* Shipment — "what did the supplier actually deliver?"
 
-   FIFO is never asked of the user: boxes simply clear the oldest open order
-   first, and the page says so in plain English. */
+   By default boxes clear the oldest open order first (FIFO), and the page says
+   so in plain English; Record packing can take them off chosen orders instead. */
 export default function PackingPage() {
   const nav = useNavigate();
   const [drawer, setDrawer] = useState(false);
@@ -107,7 +107,7 @@ export default function PackingPage() {
               })}
             </Select>
             {supFilter && <Btn size="sm" variant="ghost" onClick={() => setSupFilter("")}>Clear</Btn>}
-            <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Oldest order first — the order your boxes will be allocated in</span>
+            <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Oldest order first — the order FIFO clears them in</span>
           </CardHead>
           {pendingRows.length ? (
             <>
@@ -127,7 +127,7 @@ export default function PackingPage() {
               />
               <div className="card-foot">
                 <Note tone="amber" icon={AlertTriangle}>
-                  Rows are sorted oldest order first — that is exactly the order your boxes will be allocated in.
+                  Rows are sorted oldest order first — the order FIFO clears them in. Record packing can take boxes off chosen orders instead (Custom PO).
                   {supFilter && <> Showing <b>{supCode(supFilter)}</b> only; the whole book still owes <b>{allPendingBoxes}</b> boxes.</>}
                 </Note>
               </div>
@@ -158,7 +158,7 @@ export default function PackingPage() {
               freeze={5}
               onRowClick={(r) => setSelId(r.inv.id)}
               columns={[
-                { key: "no", w: 156, label: "Invoice", render: (r) => <Mono>{r.inv.invoice_no}</Mono> },
+                { key: "no", w: 156, label: "Invoice", render: (r) => <span className="row wrap" style={{ gap: 6 }}><Mono>{r.inv.invoice_no}</Mono>{r.inv.allocation === "custom" && <Pill tone="teal">Custom PO</Pill>}</span> },
                 { key: "date", w: 118, label: "Date", render: (r) => <span style={{ color: "var(--muted)" }}>{dmy(r.inv.date)}</span> },
                 { key: "buyer", w: 150, label: "Buyer", render: (r) => brand(r.inv.buyer_id) },
                 { key: "boxes", w: 78, label: "Boxes", align: "r", strong: true, render: (r) => r.boxes },

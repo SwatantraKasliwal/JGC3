@@ -43,10 +43,10 @@ export const docItem = (i, hidden) => {
    orderAgg() list rows in (Oswin by bore, then VP-PP, Hansa-PP, Hansa-GRN,
    VP-GRN; Setup → Additional settings may reorder it). */
 export function itemComparator(suppliers = [], sequence, groups) {
-  const codeOf = Object.fromEntries((suppliers || []).map((s) => [s.id, s.code]));
+  const supOf = Object.fromEntries((suppliers || []).map((s) => [s.id, s]));
   const keys = new Map();
   const keyOf = (it) => {
-    if (!keys.has(it)) keys.set(it, itemRank(it, codeOf[it?.supplierId] || "", sequence, groups || undefined));
+    if (!keys.has(it)) keys.set(it, itemRank(it, supOf[it?.supplierId] || "", sequence, groups || undefined));
     return keys.get(it);
   };
   return (a, b) => {
@@ -62,8 +62,8 @@ export function itemComparator(suppliers = [], sequence, groups) {
 /* Which block of its range a document item sits in (Setup → Item groups) —
    what L() and orderAgg() head their rows with. */
 export function itemBlocker(suppliers = [], groups) {
-  const codeOf = Object.fromEntries((suppliers || []).map((s) => [s.id, s.code]));
-  return (it) => itemBlock(it || {}, codeOf[it?.supplierId] || "", groups || undefined);
+  const supOf = Object.fromEntries((suppliers || []).map((s) => [s.id, s]));
+  return (it) => itemBlock(it || {}, supOf[it?.supplierId] || "", groups || undefined);
 }
 
 export const docBuyer = (b) => (b ? {
